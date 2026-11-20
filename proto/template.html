@@ -125,7 +125,8 @@ footer{font-size:11px;color:var(--muted)}
     <section><h2>週次レポート</h2><div id="weekly"></div></section>
     <section><h2>地方</h2><div id="regions"></div></section>
     <section><h2>到着ログ</h2><div id="log"></div></section>
-    <footer>数値はすべて仮設定です。路線の「編集」で停車都市を入れ替えられます（車両は始発に戻ります）。新しい都道府県をつなぐと1県につき1,000G、特産品が納期どおりに初めて届くと1,000Gの祝い金が入ります。道路時間は直線距離からの概算。県境データ：国土地理院「地球地図日本」（jpn-atlas 経由）。この画面は保存されません。</footer>
+    <section><h2>保存</h2><div class="garage"><span id="save-st">自動保存：まだ保存していません</span><button id="reset" type="button">最初からやり直す</button></div></section>
+    <footer>数値はすべて仮設定です。路線の「編集」で停車都市を入れ替えられます（車両は始発に戻ります）。新しい都道府県をつなぐと1県につき1,000G、特産品が納期どおりに初めて届くと1,000Gの祝い金が入ります。道路時間は直線距離からの概算。県境データ：国土地理院「地球地図日本」（jpn-atlas 経由）。進行状況は約10秒ごとに、このブラウザへ自動保存されます。</footer>
   </aside>
 </main>
 <script>
@@ -136,8 +137,12 @@ const GEO = /*GEO*/;
 <script>
 (function(){
 const $ = id => document.getElementById(id);
-const G = createGame(CITY_DATA);
-for (let i = 0; i < 240; i++) G.step(0.05);   // 開始時に荷物と車両が動いている状態にする
+// 進行状況はこのブラウザに自動保存する（保存できない環境では保存なしで動く）
+const SAVE_KEY = "nippon-logistics-save-v1";
+let G = null, saveData = null, saveOk = true, savedAt = 0, resetting = false;
+try { const raw = localStorage.getItem(SAVE_KEY); if (raw) saveData = JSON.parse(raw); } catch (e) { saveData = null; }
+if (saveData) { try { G = createGame(CITY_DATA, null, saveData.game); } catch (e) { G = null; saveData = null; } }
+if (!G) { G = createGame(CITY_DATA); for (let i = 0; i < 240; i++) G.step(0.05); }   // 新規開始時は荷物と車両が動いている状態にする
 const cv = $("cv"), ctx = cv.getContext("2d"), mapEl = $("map");
 let W = 0, H = 0, dpr = 1, view = { s: 1, x: 0, y: 0 }, speed = 1, building = null, hover = -1, sel = -1, col = {}, segUse = {}, pops = [], agg = {}, aggAt = 0, banners = [], bannerUntil = 0, stat = [], prevLv = {}, badSince = {}, dispMoney = G.money, hintOn = false, editing = null, addFront = false, prefMode = true, findMode = true, selFound = true, hold = 0, mode = "normal", changes = [], hoverMap = null, hoverCard = null, pinR = null;
 const paths = {}; for (const id in GEO) { const p = new Path2D(); for (const r of GEO[id]) { p.moveTo(r[0] / 5, r[1] / 5); for (let k = 2; k < r.length; k += 2) p.lineTo(r[k] / 5, r[k + 1] / 5); p.closePath(); } paths[id] = p; }
@@ -145,6 +150,9 @@ const regOf = {}; G.cities.forEach(c => regOf[c.id] = c.reg);
 const fmtG = n => Math.round(n).toLocaleString("ja-JP") + "G";
 const label = c => c.pref === c.name ? c.pref : c.pref + " " + c.name;
 
+if (saveData && saveData.ui) { prefMode = !!saveData.ui.prefMode; findMode = !!saveData.ui.findMode; hintOn = !!saveData.ui.hintOn; }
+function save(){ if (resetting) return; try { localStorage.setItem(SAVE_KEY, JSON.stringify({ game: G.serialize(), ui: { prefMode, findMode, hintOn } })); saveOk = true; savedAt = Date.now(); } catch (e) { saveOk = false; }
+  $("save-st").textContent = saveOk ? "自動保存：" + new Date(savedAt).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "保存できません（このブラウザでは保存が使えません）"; }
 function readColors(){ const cs = getComputedStyle(document.documentElement); for (const k of ["sea","land","land-locked","border","ink","muted","panel","accent","good","warn","bad","road","box"]) col[k] = cs.getPropertyValue("--" + k).trim(); }
 function resize(){ const r = mapEl.getBoundingClientRect(); dpr = window.devicePixelRatio || 1; W = r.width; H = r.height; cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
 function fit(all){ const cs = G.cities.filter(c => all || G.unlocked.has(c.reg)); let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
@@ -410,10 +418,13 @@ G.fx.length = 0; readColors(); resize(); fit(false); renderRoutes(); renderWeekl
 new ResizeObserver(() => { resize(); }).observe(mapEl);
 matchMedia("(prefers-color-scheme: dark)").addEventListener("change", readColors);
 new MutationObserver(readColors).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
-let last = performance.now(), hudAt = 0;
+let last = performance.now(), hudAt = 0, saveAt = performance.now() + 5000, resetArm = 0;
+document.addEventListener("visibilitychange", () => { if (document.hidden) save(); }); window.addEventListener("pagehide", save);
+$("reset").onclick = () => { const b = $("reset"); if (Date.now() < resetArm) { resetting = true; try { localStorage.removeItem(SAVE_KEY); } catch (e) {} location.reload(); return; }
+  resetArm = Date.now() + 4000; b.textContent = "本当に最初から？ もう一度押すと消えます"; setTimeout(() => { b.textContent = "最初からやり直す"; }, 4000); };
 function frame(now){ const dt = Math.min(100, now - last); last = now; let h = dt / 1670 * speed; while (h > 1e-9) { const s = Math.min(0.1, h); G.step(s); h -= s; }
   consumeFx(now); pumpBanner(now); dispMoney += (G.money - dispMoney) * 0.12; $("s-money").textContent = fmtG(dispMoney);
-  draw(); if (now > hudAt) { hud(); hudAt = now + 300; } requestAnimationFrame(frame); }
+  draw(); if (now > saveAt) { save(); saveAt = now + 10000; } if (now > hudAt) { hud(); hudAt = now + 300; } requestAnimationFrame(frame); }
 requestAnimationFrame(frame);
 window.__G = G;
 })();

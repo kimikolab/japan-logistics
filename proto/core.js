@@ -6,7 +6,7 @@ const REGIONS = ["北海道", "東北", "関東", "中部", "近畿", "中国", 
 const ROUTE_COLORS = ["#d1495b", "#1f7a8c", "#e09f3e", "#5b5f97", "#3a7d44", "#b5179e", "#8d6e63", "#0077b6", "#bc6c25", "#6a4c93"];
 const EDGE_SRC = "北海道-青森:8:sea,青森-岩手,青森-秋田,岩手-秋田,岩手-宮城,秋田-山形,宮城-山形,宮城-福島,山形-福島,山形-新潟,福島-栃木,福島-新潟,福島-茨城,栃木-埼玉,栃木-茨城,栃木-群馬,茨城-千葉,茨城-東京,埼玉-東京,埼玉-群馬,東京-千葉,東京-神奈川,東京-山梨,神奈川-静岡,群馬-長野,群馬-新潟,新潟-長野,新潟-富山,長野-山梨,長野-富山,長野-愛知,山梨-静岡,静岡-愛知,富山-石川,石川-福井,富山-岐阜,岐阜-愛知,福井-滋賀,愛知-三重,岐阜-滋賀,三重-滋賀,三重-奈良,滋賀-京都,京都-大阪,京都-奈良,奈良-大阪,大阪-和歌山,大阪-兵庫,兵庫-岡山,兵庫-鳥取,岡山-鳥取,鳥取-島根,岡山-広島,島根-広島,広島-山口,島根-山口,岡山-香川,兵庫-徳島,徳島-香川,香川-愛媛,香川-高知,徳島-高知,愛媛-高知,広島-愛媛:2.75,山口-福岡,福岡-佐賀,佐賀-長崎,福岡-大分,福岡-熊本,大分-宮崎,熊本-鹿児島,熊本-宮崎,宮崎-鹿児島,熊本-大分,鹿児島-沖縄:24:sea";
 
-function createGame(CITY_DATA, rng) {
+function createGame(CITY_DATA, rng, saved) {
   rng = rng || Math.random;
   const cities = CITY_DATA.map((c, i) => ({ ...c, i, wait: [], cancels: [] }));
   const byPref = {}; cities.forEach(c => byPref[c.pref] = c.i);
@@ -158,10 +158,32 @@ function createGame(CITY_DATA, rng) {
     for (const o of all) for (const d of all) if (o !== d && (add.includes(o) || add.includes(d)) && G.dist[o][d] < Infinity) s += cities[o].mass * cities[d].mass / (1 + G.dist[o][d]);
     return s * DEMAND_K * 168;
   }
+  // 保存と復元
+  const SAVE_VERSION = 1;
+  function serialize() {
+    const ship = s => ({ o: s.o, d: s.d, born: s.born, due: s.due, path: s.path, rides: s.rides });
+    return { v: SAVE_VERSION, t: G.t, money: G.money, unlocked: [...G.unlocked], judged: G.judged, lf: G.lf, week: G.week, garage: G.garage, garageBig: G.garageBig, streak: G.streak, completed: G.completed, records: G.records,
+      weekNo: G.weekNo, reports: G.reports, log: G.log.slice(-40), nextRouteId: G.nextRouteId, sweepAt: G.sweepAt, firsts: [...G.firsts], totalDelivered: G.totalDelivered,
+      cities: cities.map(c => ({ w: c.wait.map(ship), x: c.cancels })),
+      routes: G.routes.map(r => ({ id: r.id, stops: r.stops, color: r.color, lf: r.lf, wkRev: r.wkRev, wkCost: r.wkCost, lastRev: r.lastRev, lastCost: r.lastCost,
+        trucks: r.trucks.map(tr => ({ idx: tr.idx, to: tr.to, dir: tr.dir, state: tr.state, start: tr.start, until: tr.until, big: tr.big, load: tr.load.map(ship) })) })) };
+  }
+  function restore(d) {
+    if (!d || d.v !== SAVE_VERSION || !Array.isArray(d.routes) || d.cities.length !== N) throw new Error("保存データの形式が合いません");
+    for (const k of ["t", "money", "judged", "lf", "week", "garage", "garageBig", "streak", "completed", "records", "weekNo", "reports", "log", "nextRouteId", "sweepAt", "totalDelivered"]) G[k] = d[k];
+    G.unlocked = new Set(d.unlocked); G.firsts = new Set(d.firsts); rebuildRoads();
+    d.cities.forEach((c, i) => { cities[i].wait = c.w; cities[i].cancels = c.x; });
+    G.routes = d.routes.map(x => { const r = { id: x.id, stops: x.stops, color: x.color, trucks: [], lf: x.lf, wkRev: x.wkRev, wkCost: x.wkCost, lastRev: x.lastRev, lastCost: x.lastCost }; routeGeom(r);
+      r.trucks = x.trucks.map(q => ({ route: r, idx: q.idx, to: q.to, dir: q.dir, state: q.state, start: q.start, until: q.until, big: !!q.big, cap: q.big ? CAP_BIG : CAP, load: q.load, leg: q.state === "move" ? r.legs[Math.min(q.idx, q.to)] : undefined })); return r; });
+    replan();
+  }
   rebuildRoads();
-  // 開始時の路線（関東の一部だけ接続済み。水戸・宇都宮は未接続）
-  addRoute(["神奈川", "東京", "埼玉", "群馬"].map(p => byPref[p]), true); addTruck(G.routes[0], true, G.routes[0].cycle / 2);
-  addRoute(["千葉", "東京"].map(p => byPref[p]), true);
-  return Object.assign(G, { step, addRoute, addTruck, removeTruck, removeRoute, unlockRegion, regionAdjacent, roadPath, headway, onTime, served, truckCount, byPref, cityStatus, forecast, sellTruck, editRoute, upkeepOf });
+  if (saved) restore(saved);
+  else {
+    // 開始時の路線（関東の一部だけ接続済み。水戸・宇都宮は未接続）
+    addRoute(["神奈川", "東京", "埼玉", "群馬"].map(p => byPref[p]), true); addTruck(G.routes[0], true, G.routes[0].cycle / 2);
+    addRoute(["千葉", "東京"].map(p => byPref[p]), true);
+  }
+  return Object.assign(G, { step, addRoute, addTruck, removeTruck, removeRoute, unlockRegion, regionAdjacent, roadPath, headway, onTime, served, truckCount, byPref, cityStatus, forecast, sellTruck, editRoute, upkeepOf, serialize });
 }
 if (typeof module !== "undefined") module.exports = { createGame, REGIONS, CAP_BIG, TRUCK_PRICE_BIG, UPKEEP_BIG, GATE, GOAL, GOAL_WEEKS, TRUCK_SELL, FIRST_BONUS, OPEN_BONUS, TRUCK_PRICE, REGION_PRICE, CAP, UPKEEP_WEEK, MAX_STOPS };
