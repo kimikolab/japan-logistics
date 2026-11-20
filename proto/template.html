@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ニッポン物流網 プロトタイプ</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+/* 配置: 上に指標の帯、左に地図（主役）、右に路線・地方・到着ログの操作盤 */
+:root{
+  --sea:#dfe7ea; --land:#f6f3ea; --land-locked:#e6e4dc; --border:#b9b4a4; --ink:#1f2a30; --muted:#66727a;
+  --panel:#fbfaf6; --line:#d9d5c8; --accent:#1f7a8c; --good:#2e7d4f; --warn:#c77700; --bad:#c0392b; --road:#a9a595; --box:#b98a56;
+  --font:"Zen Kaku Gothic New","Hiragino Sans","Yu Gothic UI","Meiryo",sans-serif;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --sea:#172026; --land:#2a3238; --land-locked:#20272c; --border:#4a555c; --ink:#e8ecee; --muted:#9aa6ad;
+  --panel:#1d252a; --line:#35404a; --accent:#5cc0d2; --good:#6fcf97; --warn:#f2b04c; --bad:#ff7b6b; --road:#5d686f; --box:#d2a36c; color-scheme:dark; } }
+:root[data-theme="dark"]{
+  --sea:#172026; --land:#2a3238; --land-locked:#20272c; --border:#4a555c; --ink:#e8ecee; --muted:#9aa6ad;
+  --panel:#1d252a; --line:#35404a; --accent:#5cc0d2; --good:#6fcf97; --warn:#f2b04c; --bad:#ff7b6b; --road:#5d686f; --box:#d2a36c; color-scheme:dark; }
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--panel);color:var(--ink);font-family:var(--font);font-size:14px;line-height:1.5;display:flex;flex-direction:column;font-variant-numeric:tabular-nums}
+header{display:flex;flex-wrap:wrap;align-items:center;gap:6px 18px;padding:8px 16px;border-bottom:1px solid var(--line)}
+h1{font-size:16px;margin:0;font-weight:700;letter-spacing:.04em}
+.stat{display:flex;align-items:baseline;gap:6px}
+.stat span{color:var(--muted);font-size:12px}
+.stat b{font-size:15px;font-weight:700}
+.speed{margin-left:auto;display:flex;gap:4px}
+button{font:inherit;color:var(--ink);background:transparent;border:1px solid var(--line);border-radius:6px;padding:4px 10px;cursor:pointer}
+button:hover:not(:disabled){border-color:var(--accent)}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button:disabled{opacity:.45;cursor:default}
+button.on,button.primary{background:var(--accent);border-color:var(--accent);color:var(--panel);font-weight:700}
+main{flex:1;min-height:0;display:flex}
+.map{position:relative;flex:1;min-width:0;background:var(--sea)}
+canvas{display:block;width:100%;height:100%;touch-action:none;cursor:grab}
+.hint{position:absolute;left:12px;top:12px;right:60px;max-width:560px;background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:6px;padding:8px 12px;font-size:13px}
+.hint .acts{display:flex;gap:6px;margin-top:6px}
+.zoom{position:absolute;right:12px;top:12px;display:flex;flex-direction:column;gap:4px}
+.zoom button{background:var(--panel);min-width:40px}
+.tip{position:absolute;pointer-events:none;background:var(--ink);color:var(--panel);padding:6px 10px;border-radius:6px;font-size:12px;max-width:240px;display:none}
+aside{width:330px;border-left:1px solid var(--line);overflow:auto;padding:12px 16px;display:flex;flex-direction:column;gap:16px}
+h2{font-size:13px;margin:0 0 6px;color:var(--muted);font-weight:700;letter-spacing:.06em}
+.route{border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-bottom:6px;border-left-width:5px}
+.route .stops{font-weight:500}
+.route .meta{display:flex;align-items:center;gap:6px;margin-top:4px;font-size:12px;color:var(--muted);flex-wrap:wrap}
+.route .meta button{padding:1px 8px}
+.route .meta .sp{margin-left:auto}
+.reg{display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px dashed var(--line)}
+.reg .nm{flex:1}
+.reg small{color:var(--muted)}
+.pill{font-size:11px;border-radius:99px;padding:0 8px;border:1px solid currentColor}
+.banner{position:absolute;left:50%;bottom:22px;transform:translateX(-50%);background:var(--panel);border:2px solid var(--accent);border-radius:12px;padding:10px 22px;text-align:center;box-shadow:0 6px 22px rgba(0,0,0,.18);display:none;max-width:min(520px,calc(100% - 32px))}
+.banner.show{display:block;animation:pop .35s cubic-bezier(.2,1.6,.4,1)}
+.banner b{display:block;font-size:17px}
+.banner span{font-size:13px;color:var(--muted)}
+.banner .big{font-size:20px;font-weight:700;color:var(--accent)}
+@keyframes pop{from{transform:translateX(-50%) scale(.7);opacity:0}to{transform:translateX(-50%) scale(1);opacity:1}}
+@media (prefers-reduced-motion:reduce){.banner.show{animation:none}}
+.card{border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+.card h3{margin:0 0 2px;font-size:15px}
+.card p{margin:4px 0}
+.card ul{margin:4px 0;padding-left:18px}
+.hrow{display:flex;gap:8px;align-items:baseline;padding:4px 0;border-bottom:1px dashed var(--line);cursor:pointer;width:100%;text-align:left;border-radius:0;border-width:0 0 1px 0;border-style:dashed}
+.hrow small{color:var(--muted)}
+.next{background:color-mix(in srgb,var(--accent) 12%,transparent);border-radius:8px;padding:6px 10px;margin-bottom:6px}
+table{border-collapse:collapse;width:100%;font-size:13px}
+td,th{padding:2px 4px;text-align:right;border-bottom:1px dashed var(--line);font-weight:400}
+td:first-child,th:first-child{text-align:left}
+th{color:var(--muted);font-size:11px}
+.up{color:var(--good)} .down{color:var(--bad)}
+.bad{color:var(--bad)} .warnc{color:var(--warn)}
+.garage{display:flex;align-items:center;gap:8px;justify-content:space-between;border:1px dashed var(--line);border-radius:8px;padding:6px 10px;margin-bottom:6px;font-size:13px}
+.garage small{color:var(--muted);display:block}
+.fin{font-size:12px;margin:6px 0 0}
+.res{border-bottom:1px dashed var(--line);padding:4px 0;font-size:13px}
+.res small{color:var(--muted)}
+.modes{position:absolute;left:12px;bottom:12px;display:flex;flex-wrap:wrap;max-width:calc(100% - 24px);gap:4px;align-items:center;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:4px 6px;font-size:12px}
+.ok{color:var(--good)} .late{color:var(--bad)} .wk{color:var(--accent)}
+#log{font-size:12px;display:flex;flex-direction:column;gap:3px}
+#log div{display:flex;gap:6px;align-items:baseline}
+#msg{min-height:20px;font-size:12px;color:var(--bad)}
+footer{font-size:11px;color:var(--muted)}
+@media (max-width:760px){ main{flex-direction:column} .map{flex:0 0 58%} aside{width:auto;border-left:0;border-top:1px solid var(--line)} .speed{margin-left:0} }
+</style>
+</head>
+<body>
+<header>
+  <h1>ニッポン物流網</h1>
+  <div class="stat"><span>日時</span><b id="s-time">1日目 00:00</b></div>
+  <div class="stat"><span>資金</span><b id="s-money">0G</b></div>
+  <div class="stat"><span>納期遵守率（直近3日）</span><b id="s-ot">—</b></div>
+  <div class="stat"><span>積載率</span><b id="s-lf">—</b></div>
+  <div class="stat"><span>接続</span><b id="s-cov">0/47</b></div>
+  <div class="stat"><span>特産品の初出荷</span><b id="s-first">0/47</b></div>
+  <div class="stat"><span>全体</span><b id="s-all">—</b></div>
+  <div class="speed" role="group" aria-label="速度">
+    <button id="sp0" type="button">停止</button><button id="sp1" type="button">1倍</button><button id="sp3" type="button">3倍</button><button id="sp10" type="button">10倍</button>
+  </div>
+</header>
+<main>
+  <div class="map" id="map">
+    <canvas id="cv"></canvas>
+    <div class="hint" id="hint"></div>
+    <div class="zoom"><button id="z-in" type="button" aria-label="拡大">＋</button><button id="z-out" type="button" aria-label="縮小">−</button><button id="z-fit" type="button">営業圏</button><button id="z-all" type="button">全国</button></div>
+    <div class="modes" role="group" aria-label="地図の表示"><span>表示</span><button id="m-normal" type="button">通常</button><button id="m-jam" type="button">混雑</button><span>｜名前</span><button id="m-name" type="button"></button><span>｜問題の都市</span><button id="m-find" type="button"></button></div>
+    <div class="tip" id="tip"></div>
+    <div class="banner" id="banner" role="status" aria-live="polite"></div>
+  </div>
+  <aside>
+    <section id="city-sec" hidden><h2>選択中の都市</h2><div id="city" class="card"></div></section>
+    <section><h2>物流網の健康診断</h2><div id="health"></div></section>
+    <section><h2>変更の結果</h2><div id="results"></div></section>
+    <section>
+      <h2>路線</h2>
+      <div id="routes"></div>
+      <button id="new-route" class="primary" type="button">＋ 路線を作る</button>
+      <div id="msg" role="status" aria-live="polite"></div>
+    </section>
+    <section><h2>週次レポート</h2><div id="weekly"></div></section>
+    <section><h2>地方</h2><div id="regions"></div></section>
+    <section><h2>到着ログ</h2><div id="log"></div></section>
+    <footer>数値はすべて仮設定です。新しい都道府県をつなぐと1県につき1,000G、特産品が納期どおりに初めて届くと1,000Gの祝い金が入ります。道路時間は直線距離からの概算。県境データ：国土地理院「地球地図日本」（jpn-atlas 経由）。この画面は保存されません。</footer>
+  </aside>
+</main>
+<script>
+/*CORE*/
+const CITY_DATA = /*CITIES*/;
+const GEO = /*GEO*/;
+</script>
+<script>
+(function(){
+const $ = id => document.getElementById(id);
+const G = createGame(CITY_DATA);
+for (let i = 0; i < 240; i++) G.step(0.05);   // 開始時に荷物と車両が動いている状態にする
+const cv = $("cv"), ctx = cv.getContext("2d"), mapEl = $("map");
+let W = 0, H = 0, dpr = 1, view = { s: 1, x: 0, y: 0 }, speed = 1, building = null, hover = -1, sel = -1, col = {}, segUse = {}, pops = [], agg = {}, aggAt = 0, banners = [], bannerUntil = 0, stat = [], prevLv = {}, badSince = {}, dispMoney = G.money, hintOn = false, prefMode = true, findMode = true, selFound = true, hold = 0, mode = "normal", changes = [];
+const paths = {}; for (const id in GEO) { const p = new Path2D(); for (const r of GEO[id]) { p.moveTo(r[0] / 5, r[1] / 5); for (let k = 2; k < r.length; k += 2) p.lineTo(r[k] / 5, r[k + 1] / 5); p.closePath(); } paths[id] = p; }
+const regOf = {}; G.cities.forEach(c => regOf[c.id] = c.reg);
+const fmtG = n => Math.round(n).toLocaleString("ja-JP") + "G";
+const label = c => c.pref === c.name ? c.pref : c.pref + " " + c.name;
+
+function readColors(){ const cs = getComputedStyle(document.documentElement); for (const k of ["sea","land","land-locked","border","ink","muted","panel","accent","good","warn","bad","road","box"]) col[k] = cs.getPropertyValue("--" + k).trim(); }
+function resize(){ const r = mapEl.getBoundingClientRect(); dpr = window.devicePixelRatio || 1; W = r.width; H = r.height; cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
+function fit(all){ const cs = G.cities.filter(c => all || G.unlocked.has(c.reg)); let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+  for (const c of cs) { x0 = Math.min(x0, c.x); y0 = Math.min(y0, c.y); x1 = Math.max(x1, c.x); y1 = Math.max(y1, c.y); }
+  const pad = all ? 40 : 110, s = Math.min((W - pad * 2) / Math.max(1, x1 - x0), (H - pad * 2) / Math.max(1, y1 - y0), 14);
+  view.s = s; view.x = W / 2 - (x0 + x1) / 2 * s; view.y = H / 2 - (y0 + y1) / 2 * s + (all ? 0 : 20); }
+const sx = c => c.x * view.s + view.x, sy = c => c.y * view.s + view.y;
+function zoomAt(f, px, py){ const s = Math.max(0.6, Math.min(30, view.s * f)); f = s / view.s; view.x = px - (px - view.x) * f; view.y = py - (py - view.y) * f; view.s = s; }
+
+function rebuildSegUse(){ segUse = {}; for (const r of G.routes) { const seen = new Set(); for (const l of r.legs) for (let q = 0; q < l.pts.length - 1; q++) { const a = Math.min(l.pts[q], l.pts[q + 1]), b = Math.max(l.pts[q], l.pts[q + 1]), k = a + "-" + b; if (seen.has(k)) continue; seen.add(k); (segUse[k] = segUse[k] || []).push(r.id); } } }
+function segPts(rid, i, j){ const a = Math.min(i, j), b = Math.max(i, j), u = segUse[a + "-" + b] || [rid], k = Math.max(0, u.indexOf(rid)), off = (k - (u.length - 1) / 2) * 5;
+  const A = G.cities[a], B = G.cities[b], dx = sx(B) - sx(A), dy = sy(B) - sy(A), n = Math.hypot(dx, dy) || 1, ox = -dy / n * off, oy = dx / n * off;
+  const P = [sx(G.cities[i]) + ox, sy(G.cities[i]) + oy, sx(G.cities[j]) + ox, sy(G.cities[j]) + oy]; return P; }
+function truckPos(tr){ const r = tr.route;
+  if (tr.state === "dwell") { const c = G.cities[r.stops[tr.idx]]; return [sx(c), sy(c), 0]; }
+  const l = tr.leg, fwd = tr.to > tr.idx, f = Math.max(0, Math.min(1, (G.t - tr.start) / l.h)), hh = (fwd ? f : 1 - f) * l.h; let q = 0;
+  while (q < l.cum.length - 2 && l.cum[q + 1] < hh) q++;
+  const g = (hh - l.cum[q]) / Math.max(1e-9, l.cum[q + 1] - l.cum[q]), P = segPts(r.id, l.pts[q], l.pts[q + 1]);
+  return [P[0] + (P[2] - P[0]) * g, P[1] + (P[3] - P[1]) * g, Math.atan2(P[3] - P[1], P[2] - P[0]) + (fwd ? 0 : Math.PI)]; }
+
+function draw(){
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.fillStyle = col.sea; ctx.fillRect(0, 0, W, H);
+  ctx.setTransform(dpr * view.s, 0, 0, dpr * view.s, dpr * view.x, dpr * view.y); ctx.lineWidth = 0.9 / view.s; ctx.strokeStyle = col.border; ctx.lineJoin = "round";
+  for (const id in paths) { ctx.fillStyle = G.unlocked.has(regOf[id]) ? col.land : col["land-locked"]; ctx.fill(paths[id]); ctx.stroke(paths[id]); }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.lineCap = "round";
+  // 道路
+  ctx.strokeStyle = col.road; ctx.lineWidth = 1.2;
+  for (const e of G.edges) { const A = G.cities[e.a], B = G.cities[e.b], on = G.unlocked.has(A.reg) && G.unlocked.has(B.reg); if (!on && view.s < 1.4) continue;
+    ctx.globalAlpha = on ? 0.9 : 0.3; ctx.setLineDash(e.sea ? [4, 5] : []); ctx.beginPath(); ctx.moveTo(sx(A), sy(A)); ctx.lineTo(sx(B), sy(B)); ctx.stroke(); }
+  ctx.setLineDash([]); ctx.globalAlpha = 1;
+  // 路線
+  ctx.lineWidth = 4; ctx.globalAlpha = mode === "jam" ? 0.2 : 1;
+  for (const r of G.routes) { ctx.strokeStyle = r.color; ctx.beginPath(); for (const l of r.legs) for (let q = 0; q < l.pts.length - 1; q++) { const P = segPts(r.id, l.pts[q], l.pts[q + 1]); ctx.moveTo(P[0], P[1]); ctx.lineTo(P[2], P[3]); } ctx.stroke(); }
+  ctx.globalAlpha = 1;
+  // 作成中の路線
+  if (building && building.length) { ctx.strokeStyle = col.accent; ctx.lineWidth = 3; ctx.setLineDash([6, 6]); ctx.beginPath();
+    for (let k = 0; k < building.length - 1; k++) { const p = G.roadPath(building[k], building[k + 1]); p.forEach((ci, q) => { const c = G.cities[ci]; q || k ? ctx.lineTo(sx(c), sy(c)) : ctx.moveTo(sx(c), sy(c)); }); }
+    ctx.stroke(); ctx.setLineDash([]); }
+  // 都市と荷物
+  const served = G.served(), rects = [], order = G.cities.slice().sort((a, b) => (b.i === hover) - (a.i === hover) || served.has(b.i) - served.has(a.i) || G.unlocked.has(b.reg) - G.unlocked.has(a.reg) || b.mass - a.mass);
+  for (const c of G.cities) { const x = sx(c), y = sy(c), un = G.unlocked.has(c.reg), sv = served.has(c.i);
+    if (x < -40 || y < -40 || x > W + 40 || y > H + 40) continue;
+    const n = c.wait.length, lv = sv && stat[c.i] ? stat[c.i].level : 0, lc = lv === 2 ? col.bad : lv === 1 ? col.warn : col.ink;
+    if (n) { const od = stat[c.i] ? stat[c.i].overdue : 0, m = Math.min(n, 24);   // 段ボール: 1個=1箱。赤は納期切れ
+      for (let k = 0; k < m; k++) { const bx = x + 9 + (k % 8) * 7, by = y + 8 + Math.floor(k / 8) * 7; ctx.fillStyle = k < od ? col.bad : col.box; ctx.fillRect(bx, by, 6, 6); ctx.strokeStyle = col.panel; ctx.lineWidth = 1; ctx.strokeRect(bx + .5, by + .5, 5, 5); }
+      if (n > 24) { ctx.fillStyle = lc; ctx.font = "700 11px " + FONT; ctx.textBaseline = "middle"; ctx.fillText("+" + (n - 24), x + 67, y + 26); } }
+    if (mode === "jam" && lv) { ctx.beginPath(); ctx.arc(x, y, 20, 0, 6.3); ctx.fillStyle = lc; ctx.globalAlpha = 0.22; ctx.fill(); ctx.globalAlpha = 1; }
+    if (lv) { const tx = lv === 2 ? "遅延" : "混雑"; ctx.font = "700 11px " + FONT; const w = ctx.measureText(tx).width + 10; ctx.fillStyle = lc; ctx.beginPath(); ctx.roundRect(x + 8, y - 22, w, 16, 8); ctx.fill(); ctx.fillStyle = col.panel; ctx.textBaseline = "middle"; ctx.fillText(tx, x + 13, y - 13.5); }
+    if (c.i === sel && selFound) { ctx.beginPath(); ctx.arc(x, y, 11, 0, 6.3); ctx.strokeStyle = col.accent; ctx.lineWidth = 2; ctx.stroke(); }
+    if (!sv && un && view.s > 1.6) { ctx.font = "500 11px " + FONT; ctx.fillStyle = col.warn; ctx.textBaseline = "middle"; ctx.fillText("見込み 約" + r10(G.forecast([c.i])) + "箱/週", x + 10, y + 1); }
+    ctx.beginPath(); ctx.arc(x, y, sv ? 5 : un ? 5 : 2.5, 0, 6.3);
+    if (sv) { ctx.fillStyle = lc; ctx.fill(); ctx.strokeStyle = col.panel; ctx.lineWidth = 1.5; ctx.stroke(); }
+    else if (un) { ctx.fillStyle = col.panel; ctx.fill(); ctx.strokeStyle = col.warn; ctx.lineWidth = 2.5; ctx.stroke(); }
+    else { ctx.fillStyle = col.muted; ctx.globalAlpha = 0.6; ctx.fill(); ctx.globalAlpha = 1; }
+    if (building && building.includes(c.i)) { ctx.beginPath(); ctx.arc(x, y, 9, 0, 6.3); ctx.strokeStyle = col.accent; ctx.lineWidth = 2.5; ctx.stroke(); } }
+  // 車両
+  for (const r of G.routes) for (const tr of r.trucks) { const [x, y, a] = truckPos(tr); ctx.save(); ctx.translate(x, y); ctx.rotate(a);
+    ctx.fillStyle = col.panel; ctx.fillRect(-8, -5, 16, 10); ctx.fillStyle = r.color; ctx.globalAlpha = 0.35; ctx.fillRect(-7, -4, 14, 8); ctx.globalAlpha = 1;
+    ctx.fillRect(-7, -4, 14 * tr.load.length / CAP, 8); ctx.strokeStyle = r.color; ctx.lineWidth = 1.5; ctx.strokeRect(-7, -4, 14, 8); ctx.restore(); }
+  // 地名（県名は常に優先して表示。重なる場合は拡大で表示）
+  ctx.textBaseline = "middle";
+  for (const c of order) { const x = sx(c), y = sy(c); if (x < -60 || y < -20 || x > W + 20 || y > H + 20) continue; const un = G.unlocked.has(c.reg);
+    ctx.font = (un ? "700 " : "500 ") + "13px " + FONT; const full = view.s > 2.2 || c.i === hover, t = full ? label(c) : c.pref, w = ctx.measureText(t).width;
+    const hit = b => rects.some(r => b[0] < r[0] + r[2] && b[0] + b[2] > r[0] && b[1] < r[1] + r[3] && b[1] + b[3] > r[1]); let bx, ty, box, placed = false;
+    for (const [px, py] of [[x - w - 9, y], [x - w / 2, y - 17], [x - w - 5, y - 14], [x - w - 5, y + 15]]) { box = [px - 2, py - 9, w + 4, 18]; if (!hit(box)) { bx = px; ty = py; placed = true; break; } }
+    if (!placed) { if (c.i !== hover) continue; bx = x - w - 9; ty = y; box = [bx - 2, ty - 9, w + 4, 18]; } rects.push(box);
+    ctx.lineWidth = 3; ctx.strokeStyle = un ? col.land : col["land-locked"]; ctx.globalAlpha = un ? 1 : 0.75; ctx.strokeText(t, bx, ty); ctx.fillStyle = un ? col.ink : col.muted; ctx.fillText(t, bx, ty); ctx.globalAlpha = 1; }
+  // 成果のポップアップ（+収入など）
+  const now = performance.now(); pops = pops.filter(p => now - p.born < p.dur);
+  for (const p of mode === "jam" || view.s < 1.6 ? [] : pops) { const c = G.cities[p.c], f = (now - p.born) / p.dur, x = sx(c), y = sy(c) - 24 - 26 * f; ctx.globalAlpha = f < 0.7 ? 1 : (1 - f) / 0.3; ctx.font = "700 " + (p.big ? 15 : 13) + "px " + FONT; ctx.textAlign = "center";
+    ctx.lineWidth = 3.5; ctx.strokeStyle = col.panel; ctx.strokeText(p.text, x, y); ctx.fillStyle = col[p.color]; ctx.fillText(p.text, x, y); }
+  ctx.globalAlpha = 1; ctx.textAlign = "left";
+}
+const FONT = getComputedStyle(document.body).fontFamily;
+const r10 = n => n < 10 ? Math.round(n) : Math.round(n / 10) * 10;
+const nm = c => prefMode ? c.pref : c.name;
+const kenOf = c => c.pref + (c.pref === "北海道" ? "" : c.pref === "東京" ? "都" : c.pref === "大阪" || c.pref === "京都" ? "府" : "県");
+const shortR = r => nm(G.cities[r.stops[0]]) + "〜" + nm(G.cities[r.stops[r.stops.length - 1]]);
+function banner(title, sub){ banners.push([title, sub || ""]); }
+function pumpBanner(now){ const b = $("banner"); if (now < bannerUntil) return; if (!banners.length) { b.classList.remove("show"); return; }
+  const [t, s] = banners.shift(); b.classList.remove("show"); void b.offsetWidth; b.innerHTML = `<b>${t}</b><span>${s}</span>`; b.classList.add("show"); bannerUntil = now + 3200; }
+function reason(c, st){
+  if (st.level === 0) return "荷物は順調に流れています。";
+  if (st.stranded > st.topCount) return `行き先まで路線がつながっていない荷物が${st.stranded}箱あります。`;
+  const r = G.routes.find(r => r.id === st.topRoute); if (!r) return "少し前に納期切れが出ました。今は落ち着いています。";
+  if (st.topCount > CAP) return `「${shortR(r)}」を待つ荷物が${st.topCount}箱あります（1便で運べるのは${CAP}箱）。`;
+  return `「${shortR(r)}」は約${G.headway(r).toFixed(1)}時間おき。待っている間に納期が過ぎた荷物があります。`; }
+function hintText(st){ return st.stranded > st.topCount ? "行き先の都市まで路線をつなぐと流れます。" : "この路線の車両を増やすと便の間隔が短くなります。混む区間だけを走る短い路線を足す方法もあります。"; }
+function eta(r, target){ let best = Infinity;
+  for (const tr of r.trucks) { let pos, dir = tr.dir, el;
+    if (tr.state === "dwell") { if (tr.idx === target) { best = 0; continue; } el = tr.until - G.t; pos = tr.idx + dir; el += r.legs[Math.min(pos, pos - dir)].h; } else { pos = tr.to; el = tr.until - G.t; }
+    for (let k = 0; k < 2 * r.stops.length + 2; k++) { if (pos === target) { best = Math.min(best, el); break; } if (pos === r.stops.length - 1) dir = -1; else if (pos === 0) dir = 1; el += STOP_H; pos += dir; el += r.legs[Math.min(pos, pos - dir)].h; } }
+  return best <= 0.05 ? "停車中" : "約" + best.toFixed(1) + "時間後"; }
+// 変更の前後比較（変更から1日後に確定）
+function snap(stops){ let w = 0, l = 0; for (const i of stops) { const c = G.cities[i]; w += c.wait.length; l += c.cancels.length + c.wait.filter(s => s.due < G.t).length; } return { w, l }; }
+function track(label, stops){ changes.push({ label, stops: [...new Set(stops)], t: G.t, before: snap(stops), after: null }); if (changes.length > 4) changes.shift(); renderResults(); }
+function checkChanges(){ for (const ch of changes) if (!ch.after && G.t >= ch.t + 24) { ch.after = snap(ch.stops); const b = ch.before, a = ch.after;
+    banner(`1日後の結果：${ch.label}`, `待ち荷物 ${b.w}箱 → <span class="big">${a.w}箱</span>　／　納期切れ ${b.l}箱 → <span class="big">${a.l}箱</span>`); renderResults(); } }
+function renderResults(){ const arrow = (b, a) => a < b ? `<span class="up">▼${b - a}</span>` : a > b ? `<span class="down">▲${a - b}</span>` : "±0";
+  $("results").innerHTML = changes.length ? changes.slice().reverse().map(ch => { const b = ch.before, a = ch.after;
+    return `<div class="res"><b>${ch.label}</b><br>` + (a ? `待ち荷物 ${b.w}箱 → ${a.w}箱 ${arrow(b.w, a.w)}　納期切れ ${b.l}箱 → ${a.l}箱 ${arrow(b.l, a.l)}` : `<small>計測中（あと約${Math.max(1, Math.ceil(ch.t + 24 - G.t))}時間）。変更前：待ち荷物 ${b.w}箱、納期切れ ${b.l}箱</small>`) + `</div>`; }).join("")
+    : `<p style="margin:0;font-size:12px;color:var(--muted)">路線や車両を変えると、1日後にその沿線の変更前後がここに出ます。納期切れは直近1日の件数です。</p>`; }
+function refreshStatus(){ const sv = G.served();
+  for (const c of G.cities) { if (!sv.has(c.i)) { stat[c.i] = null; continue; } const st = G.cityStatus(c); stat[c.i] = st;
+    if (st.level) { if (!badSince[c.i]) badSince[c.i] = G.t; } else { if (badSince[c.i] && G.t - badSince[c.i] > 3) { pops.push({ c: c.i, text: "混雑解消！", color: "good", born: performance.now(), dur: 2600, big: true }); } badSince[c.i] = 0; } } }
+function renderHealth(){ const sv = G.served(), prob = G.cities.filter(c => stat[c.i] && stat[c.i].level).sort((a, b) => stat[b.i].level - stat[a.i].level || stat[b.i].n - stat[a.i].n);
+  const miss = G.cities.filter(c => G.unlocked.has(c.reg) && !sv.has(c.i)).map(c => [c, G.forecast([c.i])]).sort((a, b) => b[1] - a[1]);
+  let next;
+  if (prob.length && stat[prob[0].i].level === 2) next = `${nm(prob[0])}の遅延を解消する（都市を押すと原因が見られます）`;
+  else if (miss.length) next = `未接続の${miss[0][0].pref}をつなぐ（見込み 約${r10(miss[0][1])}箱/週）`;
+  else if (prob.length) next = `${nm(prob[0])}の混雑を解消する`;
+  else if (G.unlocked.size < REGIONS.length) next = (G.onTime() ?? 1) < GATE ? `納期遵守率を${GATE * 100}%以上に上げて、隣の地方へ進出する` : G.money >= REGION_PRICE ? "隣の地方へ進出する" : `資金を${REGION_PRICE.toLocaleString()}Gまで貯めて、隣の地方へ進出する`;
+  else next = G.completed ? "車両を減らして、利益の記録を伸ばせるか試す" : `遅延を減らし、遵守率${GOAL * 100}%以上を${GOAL_WEEKS}週続ける（現在 ${G.streak}/${GOAL_WEEKS}週）`;
+  const rp = G.reports[G.reports.length - 1], heavy = rp && rp.upkeep > rp.rev * 0.85, lowR = G.routes.filter(r => r.lf < 0.25 && r.trucks.length > 1).sort((a, b) => a.lf - b.lf);
+  if (heavy && lowR.length && !(prob.length && stat[prob[0].i].level === 2)) next = `積載率の低い「${shortR(lowR[0])}」（${(lowR[0].lf * 100).toFixed(0)}%）の車両を車庫に戻して、維持費を下げる`;
+  const fin = rp ? `<p class="fin">先週：収入 ${fmtG(rp.rev)} ／ 車両維持費 ${fmtG(rp.upkeep)}（${G.truckCount()}台）${heavy ? ` <span class="pill warnc">維持費が収入の${Math.round(rp.upkeep / Math.max(1, rp.rev) * 100)}%</span>` : ""}</p>` : "";
+  const bad = prob.filter(c => stat[c.i].level === 2).length, warn = prob.length - bad;
+  $("s-all").textContent = bad ? `遅延あり（${bad}都市）` : warn ? `混雑あり（${warn}都市）` : "順調"; $("s-all").style.color = bad ? col.bad : warn ? col.warn : col.good;
+  $("health").innerHTML = (hintOn ? `<div class="next"><small>ヒント：次の一手</small><br><b>${next}</b></div>` : "") + (prob.length ? prob.slice(0, 5).map(c => `<button type="button" class="hrow" data-c="${c.i}"><span class="pill ${stat[c.i].level === 2 ? "late" : "warnc"}">${stat[c.i].level === 2 ? "遅延" : "混雑"}</span><span>${prefMode ? kenOf(c) : c.name}<small>（${REGIONS[c.reg]}）</small></span><small>待ち ${stat[c.i].n}箱</small></button>`).join("") : "") +
+    `<p style="margin:6px 0 0;font-size:12px;color:var(--muted)">順調 ${sv.size - prob.length}都市 ／ 混雑 ${warn}都市 ／ 遅延 ${bad}都市</p>${fin}<button type="button" id="hint-tg" style="margin-top:6px">${hintOn ? "ヒントを隠す" : "ヒントを見る"}</button>`; }
+function renderCity(){ const sec = $("city-sec"); if (sel < 0) { sec.hidden = true; return; } sec.hidden = false; const c = G.cities[sel], sv = G.served().has(c.i), un = G.unlocked.has(c.reg);
+  let h = `<h3>${kenOf(c)}　${c.name}</h3><div style="font-size:12px;color:var(--muted)">${REGIONS[c.reg]}地方・特産：${c.prod}</div>`;
+  if (!selFound) h += `<p style="font-size:12px">地図でこの都市を探して押してみてください。 <button type="button" data-a="reveal">場所を見る</button></p>`;
+  if (!un) h += `<p>${REGIONS[c.reg]}地方はまだ進出していません。</p>`;
+  else if (!sv) h += `<p><span class="pill warnc">未接続</span> つなぐと、見込み 約${r10(G.forecast([c.i]))}箱/週 の荷物が動きます。</p><button type="button" class="primary" data-a="start">ここから路線を作る</button>`;
+  else { const st = stat[c.i] || G.cityStatus(c), cnt = {}; c.wait.forEach(s => cnt[s.d] = (cnt[s.d] || 0) + 1); const top = Object.entries(cnt).sort((a, b) => b[1] - a[1]).slice(0, 3);
+    h += `<p><span class="pill ${st.level === 2 ? "late" : st.level === 1 ? "warnc" : "ok"}">${["順調", "混雑", "遅延"][st.level]}</span> ${reason(c, st)}${hintOn && st.level ? "<br><small>ヒント：" + hintText(st) + "</small>" : ""}</p>`;
+    h += `<div style="font-size:12px;color:var(--muted)">待ち荷物 ${st.n}箱${st.overdue ? `（うち納期切れ ${st.overdue}箱）` : ""}${top.length ? "：" + top.map(([d, n]) => `${G.cities[d].name}行き${n}`).join("、") : ""}</div><ul>`;
+    for (const r of G.routes) if (r.stops.includes(c.i)) h += `<li><span style="color:${r.color}">■</span> ${shortR(r)}：${r.trucks.length}台・約${G.headway(r).toFixed(1)}時間おき・次の便 ${eta(r, r.stops.indexOf(c.i))}<br><button type="button" data-a="minus" data-r="${r.id}">−1台</button> <button type="button" data-a="plus" data-r="${r.id}">＋1台</button></li>`;
+    h += "</ul>"; }
+  $("city").innerHTML = h; }
+function renderWeekly(){ const R = G.reports, a = R[R.length - 1], b = R[R.length - 2];
+  if (!a) { $("weekly").innerHTML = `<p style="margin:0;font-size:12px;color:var(--muted)">7日目の終わりに最初の集計が出ます。</p>`; return; }
+  const d = (x, y, f) => b === undefined ? "—" : `<span class="${x - y >= 0 ? "up" : "down"}">${x - y >= 0 ? "▲" : "▼"}${f(Math.abs(x - y))}</span>`, pf = r => r.rev - r.upkeep;
+  $("weekly").innerHTML = `<table><tr><th>第${a.week}週</th><th>結果</th><th>前週比</th></tr>
+    <tr><td>配達</td><td>${a.n}箱</td><td>${d(a.n, b && b.n, v => v + "箱")}</td></tr>
+    <tr><td>納期遵守率</td><td>${(a.rate * 100).toFixed(0)}%</td><td>${d(a.rate * 100, b && b.rate * 100, v => v.toFixed(0) + "pt")}</td></tr>
+    <tr><td>収入</td><td>${fmtG(a.rev)}</td><td>${d(a.rev, b && b.rev, fmtG)}</td></tr>
+    <tr><td>車両維持費</td><td>${fmtG(a.upkeep)}</td><td>${b ? fmtG(a.upkeep - b.upkeep).replace(/^(?!-)/, "+") : "—"}</td></tr>
+    <tr><td>祝い金（開通・初出荷）</td><td>${fmtG(a.bonus || 0)}</td><td></td></tr>
+    <tr><td><b>利益（祝い金を除く）</b></td><td><b>${fmtG(pf(a))}</b></td><td>${d(pf(a), b && pf(b), fmtG)}</td></tr></table>`; }
+function consumeFx(now){ for (const e of G.fx) {
+    if (e.type === "deliver") { const a = agg[e.c] = agg[e.c] || { fee: 0, late: 0 }; a.fee += e.fee; if (!e.ok) a.late++; }
+    else if (e.type === "complete") banner("全国物流網が完成！", `47都道府県で納期遵守率${GOAL * 100}%以上を${GOAL_WEEKS}週達成　／　車両 <span class="big">${G.completed.trucks}台</span>`);
+    else if (e.type === "first") { const o = G.cities[e.o], d = G.cities[e.d]; banner(`${kenOf(o)}の${o.prod}が初出荷！ 祝い金 +${FIRST_BONUS.toLocaleString()}G`, `${o.name} → ${d.name}　／　特産品の初出荷 <span class="big">${G.firsts.size}</span>/47`); } }
+  G.fx.length = 0;
+  if (now > aggAt) { aggAt = now + 900; for (const k in agg) { const a = agg[k]; if (a.fee > 0) pops.push({ c: +k, text: "+" + Math.round(a.fee) + "G", color: a.late ? "warn" : "good", born: now, dur: 1500 }); } agg = {}; }
+  while (G.reports.length > seenWeeks) { const a = G.reports[seenWeeks], b = G.reports[seenWeeks - 1], p = a.rev - a.upkeep; seenWeeks++; renderWeekly();
+    banner(`第${a.week}週の決算　利益 ${fmtG(p)}`, b ? `前週比 ${p - (b.rev - b.upkeep) >= 0 ? "+" : ""}${fmtG(p - (b.rev - b.upkeep))}　／　納期遵守率 ${(a.rate * 100).toFixed(0)}%` : `配達 ${a.n}箱　／　納期遵守率 ${(a.rate * 100).toFixed(0)}%`); } }
+let seenWeeks = 0;
+
+// ---------- 右側の操作盤 ----------
+function names(stops){ return stops.map(i => nm(G.cities[i])).join(" → "); }
+function renderRouteList(){
+  $("routes").innerHTML = (G.routes.map(r => { const pf = r.lastRev === null ? null : r.lastRev - r.lastCost, low = r.lf < 0.25;
+    return `<div class="route" style="border-left-color:${r.color}"><div class="stops">${names(r.stops)}</div>
+    <div class="meta"><span>${r.trucks.length}台</span><button type="button" data-a="minus" data-r="${r.id}" aria-label="1台を車庫に戻す">−</button><button type="button" data-a="plus" data-r="${r.id}" aria-label="1台増やす">＋</button>
+    <span>約${G.headway(r).toFixed(1)}時間おき</span><button type="button" class="sp" data-a="del" data-r="${r.id}">廃止</button></div>
+    <div class="meta"><span class="${low ? "warnc" : ""}">積載率 ${(r.lf * 100).toFixed(0)}%</span><span>${pf === null ? "収支は週末に集計" : `先週の収支 <b class="${pf < 0 ? "bad" : "ok"}">${pf >= 0 ? "+" : ""}${fmtG(pf)}</b>`}</span>${pf !== null && pf < 0 ? `<span class="pill late">赤字</span>` : low ? `<span class="pill warnc">空きが多い</span>` : ""}</div></div>`; }).join("") || "<p>路線がありません。</p>")
+    + `<div class="garage"><span>車庫 <b>${G.garage}台</b><small>（維持費なし。＋を押すと車庫の車両から使います）</small></span>${G.garage ? `<button type="button" data-a="sell">1台売却 +${TRUCK_SELL.toLocaleString()}G</button>` : ""}</div>`; }
+function renderRoutes(){ rebuildSegUse(); renderRouteList(); renderRegions(); renderHint(); refreshStatus(); renderHealth(); renderCity(); }
+function renderRegions(){ const sv = G.served();
+  $("regions").innerHTML = REGIONS.map((n, k) => { const cs = G.cities.filter(c => c.reg === k), m = cs.filter(c => sv.has(c.i)).length, un = G.unlocked.has(k), adj = G.regionAdjacent(k);
+    return `<div class="reg"><span class="nm">${n} <small>${cs.length}都道府県</small></span>${un ? `<span class="pill ${m === cs.length ? "ok" : "wk"}">接続 ${m}/${cs.length}</span>` : adj ? `<button type="button" data-reg="${k}">進出 ${REGION_PRICE.toLocaleString()}G</button>` : `<small>隣の地方から</small>`}</div>`; }).join("") + (G.unlocked.size < REGIONS.length ? (() => { const ot = G.onTime(), okq = ot === null || ot >= GATE;
+    return `<p class="fin">進出の条件：資金 ${REGION_PRICE.toLocaleString()}G ／ 納期遵守率 ${GATE * 100}%以上 <span class="pill ${okq ? "ok" : "late"}">現在 ${ot === null ? "—" : Math.floor(ot * 100) + "%"}</span></p>`; })() : ""); }
+function renderHint(){ const h = $("hint");
+  if (building) { h.innerHTML = `<b>路線を作成中</b>：都市を順にクリック（2〜${MAX_STOPS}都市）。途中の都市は通過します。<br>${building.length ? names(building) + "　／　見込み需要 +約" + r10(G.forecast(building)) + "箱/週" : "最初の都市を選んでください"}
+    <div class="acts"><button id="b-ok" class="primary" type="button" ${building.length < 2 ? "disabled" : ""}>開通する（${G.garage ? "車庫の車両を使用" : "車両1台 " + TRUCK_PRICE.toLocaleString() + "G"}）</button><button id="b-undo" type="button" ${building.length ? "" : "disabled"}>1つ戻す</button><button id="b-cancel" type="button">やめる</button></div>`; return; }
+  const sv = G.served(), miss = G.cities.filter(c => G.unlocked.has(c.reg) && !sv.has(c.i));
+  if (miss.length) h.innerHTML = `<b>未接続：${miss.slice(0, 6).map(c => c.pref).join("・")}${miss.length > 6 ? " ほか" : ""}</b><br>橙色の輪の都市です。「路線を作る」でつなぐと、荷物が流れ始めます。`;
+  else if (G.unlocked.size < REGIONS.length) h.innerHTML = `<b>営業圏の全都道府県がつながりました。</b><br>` + ((G.onTime() ?? 1) < GATE ? `次の地方へ進出するには、納期遵守率を${GATE * 100}%以上にする必要があります（現在 ${Math.floor(G.onTime() * 100)}%）。` : G.money >= REGION_PRICE ? "右の「地方」から、隣の地方へ進出できます。" : `次の地方への進出には ${REGION_PRICE.toLocaleString()}G 必要です。利益の出ていない路線は、右の「路線」で積載率と収支を確認できます。`);
+  else if (!G.completed) h.innerHTML = `<b>全国47都道府県がつながりました。</b><br>納期遵守率${GOAL * 100}%以上の週を${GOAL_WEEKS}週続けると、全国物流網の完成です（現在 <b>${G.streak}/${GOAL_WEEKS}週</b>）。`;
+  else h.innerHTML = `<b>全国物流網が完成しました（第${G.completed.week}週）。</b><br>ここからは記録に挑戦できます。遵守率${GOAL * 100}%以上の週の記録：最高利益 ${G.records.profit === null ? "—" : fmtG(G.records.profit)} ／ 最少車両 ${G.records.trucks === null ? "—" : G.records.trucks + "台"}`; }
+let msgT = 0; function say(m){ if (!m) return; $("msg").textContent = m; clearTimeout(msgT); msgT = setTimeout(() => $("msg").textContent = "", 5000); }
+function hud(){ const d = Math.floor(G.t / 24) + 1, hh = Math.floor(G.t % 24), mm = Math.floor(G.t % 1 * 60 / 10) * 10, ot = G.onTime();
+  refreshStatus(); checkChanges(); if (!building) renderHint(); if (!hold) { renderHealth(); renderRouteList(); renderRegions(); if (sel >= 0) renderCity(); if (changes.some(ch => !ch.after)) renderResults(); } $("s-first").textContent = G.firsts.size + "/47";
+  $("s-time").textContent = `${d}日目 ${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`; $("s-money").style.color = G.money < 0 ? col.bad : "";
+  $("s-ot").textContent = ot === null ? "—" : (ot * 100).toFixed(0) + "%"; $("s-ot").style.color = ot === null ? "" : ot >= 0.95 ? col.good : ot >= 0.85 ? col.warn : col.bad;
+  $("s-lf").textContent = (G.lf * 100).toFixed(0) + "%"; $("s-cov").textContent = G.served().size + "/47";
+  const out = []; for (let k = G.log.length - 1; k >= 0 && out.length < 9; k--) { const e = G.log[k];
+    if (e.kind === "f") { const o = G.cities[e.o]; out.push(`<div><span class="pill wk">初出荷</span><span>${o.pref}の${o.prod}</span></div>`); }
+    else if (e.kind === "w") out.push(`<div><span class="pill wk">第${e.rep.week}週</span><span>配達 ${e.rep.n}箱・遵守率 ${(e.rep.rate * 100).toFixed(0)}%・収支 ${fmtG(e.rep.rev - e.rep.upkeep)}</span></div>`);
+    else if (out.filter(s => s.includes("→")).length < 7) { const o = G.cities[e.o], dd = G.cities[e.d]; out.push(`<div><span class="pill ${e.ok ? "ok" : "late"}">${e.ok ? "定時" : "遅延"}</span><span>${o.pref}の${o.prod} → ${nm(dd)}</span></div>`); } }
+  $("log").innerHTML = out.join(""); }
+
+// ---------- 操作 ----------
+function cityAt(px, py){ let best = -1, bd = 18; for (const c of G.cities) { const d = Math.hypot(sx(c) - px, sy(c) - py); if (d < bd) { bd = d; best = c.i; } } return best; }
+function clickCity(i){ if (!building) { if (i === sel && !selFound) pops.push({ c: i, text: "見つけた！", color: "good", born: performance.now(), dur: 1800, big: true }); sel = i; selFound = true; renderCity(); return; } const c = G.cities[i];
+  if (!G.unlocked.has(c.reg)) return say(REGIONS[c.reg] + "地方はまだ進出していません");
+  if (building.includes(i)) return say("同じ都市は1回だけ選べます");
+  if (building.length >= MAX_STOPS) return say("1路線は" + MAX_STOPS + "都市までです");
+  if (building.length && !G.roadPath(building[building.length - 1], i)) return say("道路がつながっていません");
+  building.push(i); renderHint(); }
+let drag = null;
+cv.addEventListener("pointerdown", e => { drag = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y, moved: false }; cv.setPointerCapture(e.pointerId); });
+cv.addEventListener("pointermove", e => { const r = cv.getBoundingClientRect(), px = e.clientX - r.left, py = e.clientY - r.top;
+  if (drag) { const dx = e.clientX - drag.x, dy = e.clientY - drag.y; if (Math.hypot(dx, dy) > 4) drag.moved = true; if (drag.moved) { view.x = drag.vx + dx; view.y = drag.vy + dy; cv.style.cursor = "grabbing"; } }
+  const h = drag && drag.moved ? -1 : cityAt(px, py); hover = h; const tip = $("tip");
+  if (h >= 0) { const c = G.cities[h], cnt = {}; c.wait.forEach(s => cnt[s.d] = (cnt[s.d] || 0) + 1); const top = Object.entries(cnt).sort((a, b) => b[1] - a[1])[0];
+    tip.innerHTML = `<b>${kenOf(c)}　${c.name}</b><br>特産：${c.prod}<br>待ち荷物：${c.wait.length}箱${top ? `（最多は${G.cities[top[0]].name}行き ${top[1]}箱）` : ""}<br>押すと詳しい状態を表示`;
+    tip.style.display = "block"; tip.style.left = Math.min(px + 14, W - 250) + "px"; tip.style.top = (py + 16) + "px"; if (!drag) cv.style.cursor = building ? "pointer" : "grab"; }
+  else { tip.style.display = "none"; if (!drag) cv.style.cursor = "grab"; } });
+cv.addEventListener("pointerup", e => { const r = cv.getBoundingClientRect(); if (drag && !drag.moved) { const i = cityAt(e.clientX - r.left, e.clientY - r.top); if (i >= 0) clickCity(i); else if (!building && sel >= 0) { sel = -1; renderCity(); } } drag = null; cv.style.cursor = "grab"; });
+cv.addEventListener("pointerleave", () => { hover = -1; $("tip").style.display = "none"; });
+cv.addEventListener("wheel", e => { e.preventDefault(); const r = cv.getBoundingClientRect(); zoomAt(e.deltaY < 0 ? 1.15 : 1 / 1.15, e.clientX - r.left, e.clientY - r.top); }, { passive: false });
+$("z-in").onclick = () => zoomAt(1.4, W / 2, H / 2); $("z-out").onclick = () => zoomAt(1 / 1.4, W / 2, H / 2); $("z-fit").onclick = () => fit(false); $("z-all").onclick = () => fit(true);
+function setSpeed(v){ speed = v; for (const k of [0, 1, 3, 10]) $("sp" + k).classList.toggle("on", k === v); }
+for (const k of [0, 1, 3, 10]) $("sp" + k).onclick = () => setSpeed(k);
+$("new-route").onclick = () => { building = []; renderHint(); };
+$("hint").addEventListener("click", e => { const id = e.target.id;
+  if (id === "b-cancel") { building = null; renderHint(); }
+  else if (id === "b-undo") { building.pop(); renderHint(); }
+  else if (id === "b-ok") { const before = G.served(), r0 = G.rate, err = G.addRoute(building);
+    if (err) say(err); else { const added = building.filter(i => !before.has(i)).map(i => G.cities[i].pref), dq = (G.rate - r0) * 168; track("開通 " + shortR(G.routes[G.routes.length - 1]), building); building = null;
+      banner(added.length ? `路線開通！ ${added.join("・")}がつながりました` : "新しい路線が開通！", `つながった都道府県 ${before.size} → <span class="big">${G.served().size}</span>　／　配送需要 ${dq >= 0 ? "+" : ""}約${r10(dq)}箱/週${G.lastBonus ? `　／　開通祝い金 <span class="big">+${G.lastBonus.toLocaleString()}G</span>` : ""}`); }
+    renderHint(); } });
+function minusTruck(r){ const stops = r.stops.slice(), nm = shortR(r), err = G.removeTruck(r); if (err) say(err); else { track("減便 " + nm, stops); banner(`減便 ${nm}`, `維持費 <span class="big">−${UPKEEP_WEEK.toLocaleString()}G/週</span>　／　車両は車庫へ（売却するか、他の路線の増車に使えます）`); } }
+function plusTruck(r){ const h0 = G.headway(r), err = G.addTruck(r); if (err) say(err); else track("増便 " + shortR(r), r.stops); if (!err) banner(`増便！ ${shortR(r)}`, `約${h0.toFixed(1)}時間おき → <span class="big">約${G.headway(r).toFixed(1)}時間おき</span>`); }
+$("city").addEventListener("click", e => { const b = e.target.closest("button"); if (!b) return;
+  if (b.dataset.a === "reveal") { selFound = true; renderCity(); } else if (b.dataset.a === "start") { building = [sel]; renderHint(); } else { const r = G.routes.find(r => r.id === +b.dataset.r); if (r) (b.dataset.a === "minus" ? minusTruck(r) : plusTruck(r)); } });
+const asideEl = document.querySelector("aside"); asideEl.addEventListener("pointerdown", () => { hold = 1; }); window.addEventListener("pointerup", () => setTimeout(() => { hold = 0; }, 80));
+function setMode(m){ mode = m; $("m-normal").classList.toggle("on", m === "normal"); $("m-jam").classList.toggle("on", m === "jam"); }
+$("m-normal").onclick = () => setMode("normal"); $("m-jam").onclick = () => setMode("jam");
+function syncToggles(){ $("m-name").textContent = prefMode ? "県名" : "都市名"; $("m-find").textContent = findMode ? "自分で探す" : "地図に表示"; }
+$("m-name").onclick = () => { prefMode = !prefMode; syncToggles(); renderRoutes(); renderResults(); };
+$("m-find").onclick = () => { findMode = !findMode; if (!findMode) selFound = true; syncToggles(); renderCity(); };
+syncToggles();
+$("health").addEventListener("click", e => { if (e.target.id === "hint-tg") { hintOn = !hintOn; renderHealth(); renderCity(); return; } const b = e.target.closest("[data-c]"); if (b) { sel = +b.dataset.c; selFound = !findMode; renderCity(); $("city-sec").scrollIntoView({ block: "nearest" }); } });
+$("routes").addEventListener("click", e => { const b = e.target.closest("button"); if (!b) return; if (b.dataset.a === "sell") { const e2 = G.sellTruck(); if (e2) say(e2); else { banner("車両を1台売却", `資金 <span class="big">+${TRUCK_SELL.toLocaleString()}G</span>`); renderRouteList(); } return; }
+  const r = G.routes.find(r => r.id === +b.dataset.r); if (!r) return;
+  if (b.dataset.a === "plus") plusTruck(r); else if (b.dataset.a === "minus") minusTruck(r); else { const stops = r.stops.slice(), nm = shortR(r); G.removeRoute(r); track("廃止 " + nm, stops); } });
+$("regions").addEventListener("click", e => { const b = e.target.closest("button"); if (!b) return; const k = +b.dataset.reg, err = G.unlockRegion(k); if (err) say(err); else { fit(false); banner(`${REGIONS[k]}地方に進出！`, `新たに${G.cities.filter(c => c.reg === k).length}都道府県へ路線を引けます`); } });
+document.addEventListener("keydown", e => { if (e.code === "Space" && e.target.tagName !== "BUTTON") { e.preventDefault(); setSpeed(speed ? 0 : 1); } });
+
+G.onChange = renderRoutes;
+G.fx.length = 0; readColors(); resize(); fit(false); renderRoutes(); renderWeekly(); renderResults(); setMode("normal"); setSpeed(1); hud();
+new ResizeObserver(() => { resize(); }).observe(mapEl);
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", readColors);
+new MutationObserver(readColors).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+let last = performance.now(), hudAt = 0;
+function frame(now){ const dt = Math.min(100, now - last); last = now; let h = dt / 1670 * speed; while (h > 1e-9) { const s = Math.min(0.1, h); G.step(s); h -= s; }
+  consumeFx(now); pumpBanner(now); dispMoney += (G.money - dispMoney) * 0.12; $("s-money").textContent = fmtG(dispMoney);
+  draw(); if (now > hudAt) { hud(); hudAt = now + 300; } requestAnimationFrame(frame); }
+requestAnimationFrame(frame);
+window.__G = G;
+})();
+</script>
+</body>
+</html>

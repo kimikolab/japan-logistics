@@ -1,0 +1,13 @@
+const { createGame } = require("./core.js"); const C = require("../data/cities.json");
+let seed = 7; const rng = () => (seed = (seed * 1664525 + 1013904223) % 4294967296) / 4294967296;
+const G = createGame(C, rng); const P = n => G.byPref[n];
+const run = (h, label) => { for (let i = 0; i < h * 20; i++) G.step(0.05); const ot = G.onTime();
+  console.log(label, "day", (G.t / 24).toFixed(0), "money", Math.round(G.money), "ontime", ot === null ? "-" : (100 * ot).toFixed(1) + "%", "load", (100 * G.lf).toFixed(0) + "%", "rate/h", G.rate.toFixed(1), "trucks", G.truckCount(), "served", G.served().size, "waiting", G.cities.reduce((s, c) => s + c.wait.length, 0)); };
+console.log("edges", G.edges.length, "sample h:", G.edges.slice(0, 5).map(e => G.cities[e.a].name + "-" + G.cities[e.b].name + " " + e.h).join(", "));
+run(72, "starter");
+console.log(G.addRoute([P("茨城"), P("栃木"), P("埼玉")]), G.addRoute([P("茨城"), P("東京")]));
+run(24 * 7, "kanto full"); console.log(JSON.stringify(G.reports));
+console.log(G.unlockRegion(3), G.unlockRegion(1), G.unlockRegion(0), G.unlockRegion(7));
+console.log(G.addRoute([P("東京"), P("山梨"), P("長野"), P("新潟")]), G.addRoute([P("神奈川"), P("静岡"), P("愛知")]), G.addRoute([P("栃木"), P("福島"), P("宮城")]));
+run(24 * 7, "expanded"); G.addTruck(G.routes[0]); G.removeTruck(G.routes[0]); G.removeRoute(G.routes[1]); run(48, "after edits");
+console.log("reports", JSON.stringify(G.reports.map(r => ({ w: r.week, n: r.n, rate: +r.rate.toFixed(2), rev: Math.round(r.rev), up: Math.round(r.upkeep) }))));
