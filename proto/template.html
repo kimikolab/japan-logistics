@@ -59,6 +59,8 @@ h2{font-size:13px;margin:0 0 6px;color:var(--muted);font-weight:700;letter-spaci
 .banner b{display:block;font-size:17px}
 .banner span{font-size:13px;color:var(--muted)}
 .banner .big{font-size:20px;font-weight:700;color:var(--accent)}
+.banner .voice,.voice{display:block;margin-top:4px;font-size:13px;color:var(--ink)}
+.stars{color:var(--box);letter-spacing:1px}
 @keyframes pop{from{transform:translateX(-50%) scale(.7);opacity:0}to{transform:translateX(-50%) scale(1);opacity:1}}
 @media (prefers-reduced-motion:reduce){.banner.show{animation:none}}
 .card{border:1px solid var(--line);border-radius:8px;padding:8px 10px}
@@ -98,6 +100,7 @@ footer{font-size:11px;color:var(--muted)}
   <div class="stat"><span>積載率</span><b id="s-lf">—</b></div>
   <div class="stat"><span>接続</span><b id="s-cov">0/47</b></div>
   <div class="stat"><span>特産品の初出荷</span><b id="s-first">0/47</b></div>
+  <div class="stat"><span>発展した県</span><b id="s-dev">0/47</b></div>
   <div class="stat"><span>全体</span><b id="s-all">—</b></div>
   <div class="speed" role="group" aria-label="速度">
     <button id="sp0" type="button">停止</button><button id="sp1" type="button">1倍</button><button id="sp3" type="button">3倍</button><button id="sp10" type="button">10倍</button>
@@ -210,6 +213,7 @@ function draw(){
     if (lv) { const tx = lv === 2 ? "遅延" : "混雑"; ctx.font = "700 11px " + FONT; const w = ctx.measureText(tx).width + 10; ctx.fillStyle = lc; ctx.beginPath(); ctx.roundRect(x + 8, y - 22, w, 16, 8); ctx.fill(); ctx.fillStyle = col.panel; ctx.textBaseline = "middle"; ctx.fillText(tx, x + 13, y - 13.5); }
     if (c.i === sel && selFound) { ctx.beginPath(); ctx.arc(x, y, 11, 0, 6.3); ctx.strokeStyle = col.accent; ctx.lineWidth = 2; ctx.stroke(); }
     if (!sv && un && view.s > 1.6) { ctx.font = "500 11px " + FONT; ctx.fillStyle = col.warn; ctx.textBaseline = "middle"; ctx.fillText("見込み 約" + r10(G.forecast([c.i])) + "箱/週", x + 10, y + 1); }
+    if (sv && c.goodWeeks >= GROW_WEEKS[0]) { ctx.font = "700 14px " + FONT; ctx.textBaseline = "middle"; ctx.textAlign = "center"; const sx_ = "★".repeat(c.goodWeeks >= GROW_WEEKS[1] ? 2 : 1); ctx.lineWidth = 3; ctx.strokeStyle = col.land; ctx.strokeText(sx_, x - 3, y + 15); ctx.fillStyle = col.box; ctx.fillText(sx_, x - 3, y + 15); ctx.textAlign = "left"; }
     ctx.beginPath(); ctx.arc(x, y, sv ? 5 : un ? 5 : 2.5, 0, 6.3);
     if (sv) { ctx.fillStyle = lc; ctx.fill(); ctx.strokeStyle = col.panel; ctx.lineWidth = 1.5; ctx.stroke(); }
     else if (un) { ctx.fillStyle = col.panel; ctx.fill(); ctx.strokeStyle = col.warn; ctx.lineWidth = 2.5; ctx.stroke(); }
@@ -239,9 +243,22 @@ const r10 = n => n < 10 ? Math.round(n) : Math.round(n / 10) * 10;
 const nm = c => prefMode ? c.pref : c.name;
 const kenOf = c => c.pref + (c.pref === "北海道" ? "" : c.pref === "東京" ? "都" : c.pref === "大阪" || c.pref === "京都" ? "府" : "県");
 const shortR = r => nm(G.cities[r.stops[0]]) + "〜" + nm(G.cities[r.stops[r.stops.length - 1]]);
-function banner(title, sub){ banners.push([title, sub || ""]); }
+function banner(title, sub, voice){ banners.push([title, sub || "", voice || ""]); }
+// 地域の声: 物流の状態に応じた住民・生産者のひとこと（特産品を織り込む）
+const VOICES = {
+  open: ["これで{p}も遠くの町に届けられるね！", "{p}を待っている人に、やっと届けられます。"],
+  first: ["うちの{p}が{d}に届いたって！", "{d}まで{p}が届くようになったんだね。"],
+  s2: ["最近は{p}の注文が増えて、毎日忙しいよ。", "{p}の出荷が安定してきました。ありがたいことです。"],
+  s3: ["出荷が順調だから、{p}の作業場を広げることになったんだ。", "{p}の取引先が増えて、人を増やすことにしました。"],
+  jam: ["注文は増えているんだけど、荷物がなかなか出発しないんだよね。", "倉庫に{p}の箱が積み上がってきました……。"],
+  late: ["せっかくの{p}が、予定の日に届かなかったみたい……。", "{p}の到着が遅れて、取引先に謝ってきました。"],
+  fixed: ["最近は予定どおり届くようになったよ。助かっている！", "{p}がまた順調に出ていくようになりました。"],
+  ok: ["{p}は今日も順調に出荷できています。", "荷物が予定どおりに動いていて、安心です。"] };
+const voice = (c, kind, d) => { const a = VOICES[kind]; return "「" + a[c.i % a.length].replace("{p}", c.prod).replace("{d}", d ? d.name : "") + "」"; };
+const STAGE = ["未接続", "物流開通", "物流定着", "地域産業発展"], stars = n => n >= 2 ? `<span class="stars">${"★".repeat(n - 1)}</span>` : "";
+const lastVoice = {}; function say2(c, kind){ if (G.t - (lastVoice[c.i] ?? -99) < 48) return; lastVoice[c.i] = G.t; G.log.push({ t: G.t, kind: "v", c: c.i, text: voice(c, kind), tone: kind }); }
 function pumpBanner(now){ const b = $("banner"); if (now < bannerUntil) return; if (!banners.length) { b.classList.remove("show"); return; }
-  const [t, s] = banners.shift(); b.classList.remove("show"); void b.offsetWidth; b.innerHTML = `<b>${t}</b><span>${s}</span>`; b.classList.add("show"); bannerUntil = now + 3200; }
+  const [t, s, v] = banners.shift(); b.classList.remove("show"); void b.offsetWidth; b.innerHTML = `<b>${t}</b><span>${s}</span>${v ? `<span class="voice">${v}</span>` : ""}`; b.classList.add("show"); bannerUntil = now + 3200; }
 function reason(c, st){
   if (st.level === 0) return "荷物は順調に流れています。";
   if (st.stranded > st.topCount) return `行き先まで路線がつながっていない荷物が${st.stranded}箱あります。`;
@@ -265,7 +282,8 @@ function renderResults(){ const arrow = (b, a) => a < b ? `<span class="up">▼$
     : `<p style="margin:0;font-size:12px;color:var(--muted)">路線や車両を変えると、1日後にその沿線の変更前後がここに出ます。納期切れは直近1日の件数です。</p>`; }
 function refreshStatus(){ const sv = G.served();
   for (const c of G.cities) { if (!sv.has(c.i)) { stat[c.i] = null; continue; } const st = G.cityStatus(c); stat[c.i] = st;
-    if (st.level) { if (!badSince[c.i]) badSince[c.i] = G.t; } else { if (badSince[c.i] && G.t - badSince[c.i] > 3) { pops.push({ c: c.i, text: "混雑解消！", color: "good", born: performance.now(), dur: 2600, big: true }); } badSince[c.i] = 0; } } }
+    if (st.level) { if (!badSince[c.i]) badSince[c.i] = G.t; else if (G.t - badSince[c.i] > 3 && (prevLv[c.i] || 0) < st.level) { prevLv[c.i] = st.level; say2(c, st.level === 2 ? "late" : "jam"); } }
+    else { if (badSince[c.i] && G.t - badSince[c.i] > 3) { pops.push({ c: c.i, text: "混雑解消！", color: "good", born: performance.now(), dur: 2600, big: true }); lastVoice[c.i] = -99; say2(c, "fixed"); } badSince[c.i] = 0; prevLv[c.i] = 0; } } }
 function renderHealth(){ const sv = G.served(), prob = G.cities.filter(c => stat[c.i] && stat[c.i].level).sort((a, b) => stat[b.i].level - stat[a.i].level || stat[b.i].n - stat[a.i].n);
   const miss = G.cities.filter(c => G.unlocked.has(c.reg) && !sv.has(c.i)).map(c => [c, G.forecast([c.i])]).sort((a, b) => b[1] - a[1]);
   let next;
@@ -283,6 +301,8 @@ function renderHealth(){ const sv = G.served(), prob = G.cities.filter(c => stat
     `<p style="margin:6px 0 0;font-size:12px;color:var(--muted)">順調 ${sv.size - prob.length}都市 ／ 混雑 ${warn}都市 ／ 遅延 ${bad}都市</p>${fin}<button type="button" id="hint-tg" style="margin-top:6px">${hintOn ? "ヒントを隠す" : "ヒントを見る"}</button>`; }
 function renderCity(){ const sec = $("city-sec"); if (sel < 0) { sec.hidden = true; return; } sec.hidden = false; const c = G.cities[sel], sv = G.served().has(c.i), un = G.unlocked.has(c.reg);
   let h = `<h3>${kenOf(c)}　${c.name}</h3><div style="font-size:12px;color:var(--muted)">${REGIONS[c.reg]}地方・特産：${c.prod}</div>`;
+  if (sv) { const sg = G.stageOf(c), need = sg === 1 ? GROW_WEEKS[0] : sg === 2 ? GROW_WEEKS[1] : 0, st0 = stat[c.i] || G.cityStatus(c);
+    h += `<p style="font-size:12px;margin:4px 0"><b>${STAGE[sg]}</b> ${stars(sg)}　${need ? `安定した週 ${c.goodWeeks}/${need}（遵守率90%以上の週を数えます）` : "この県の産業は発展しました"}<span class="voice">${voice(c, st0.level === 2 ? "late" : st0.level === 1 ? "jam" : sg === 3 ? "s3" : sg === 2 ? "s2" : "ok")}</span></p>`; }
   if (!selFound) h += `<p style="font-size:12px">地図でこの都市を探して押してみてください。 <button type="button" data-a="reveal">場所を見る</button></p>`;
   if (!un) h += `<p>${REGIONS[c.reg]}地方はまだ進出していません。</p>`;
   else if (!sv) h += `<p><span class="pill warnc">未接続</span> つなぐと、見込み 約${r10(G.forecast([c.i]))}箱/週 の荷物が動きます。</p><button type="button" class="primary" data-a="start">ここから路線を作る</button>`;
@@ -302,10 +322,14 @@ function renderWeekly(){ const R = G.reports, a = R[R.length - 1], b = R[R.lengt
     <tr><td>車両維持費</td><td>${fmtG(a.upkeep)}</td><td>${b ? fmtG(a.upkeep - b.upkeep).replace(/^(?!-)/, "+") : "—"}</td></tr>
     <tr><td>祝い金（開通・初出荷）</td><td>${fmtG(a.bonus || 0)}</td><td></td></tr>
     <tr><td><b>利益（祝い金を除く）</b></td><td><b>${fmtG(pf(a))}</b></td><td>${d(pf(a), b && pf(b), fmtG)}</td></tr></table>`; }
-function consumeFx(now){ for (const e of G.fx) {
+function consumeFx(now){ const grows = []; for (const e of G.fx) {
     if (e.type === "deliver") { const a = agg[e.c] = agg[e.c] || { fee: 0, late: 0 }; a.fee += e.fee; if (!e.ok) a.late++; }
     else if (e.type === "complete") banner("全国物流網が完成！", `47都道府県で納期遵守率${GOAL * 100}%以上を${GOAL_WEEKS}週達成　／　車両 <span class="big">${G.completed.trucks}台</span>`);
-    else if (e.type === "first") { const o = G.cities[e.o], d = G.cities[e.d]; banner(`${kenOf(o)}の${o.prod}が初出荷！ 祝い金 +${FIRST_BONUS.toLocaleString()}G`, `${o.name} → ${d.name}　／　特産品の初出荷 <span class="big">${G.firsts.size}</span>/47`); } }
+    else if (e.type === "first") { const o = G.cities[e.o], d = G.cities[e.d]; banner(`${kenOf(o)}の${o.prod}が初出荷！ 祝い金 +${FIRST_BONUS.toLocaleString()}G`, `${o.name} → ${d.name}　／　特産品の初出荷 <span class="big">${G.firsts.size}</span>/47`, `${o.pref}の声：${voice(o, "first", d)}`); }
+    else if (e.type === "grow") { grows.push(e); pops.push({ c: e.c, text: "★".repeat(e.stage - 1), color: "warn", born: now, dur: 3000, big: true }); } }
+  for (const sg of [3, 2]) { const g = grows.filter(e => e.stage === sg).map(e => G.cities[e.c]); if (!g.length) continue;   // 同じ週の発展は1つのお知らせにまとめる
+    const who = g.length <= 3 ? g.map(kenOf).join("・") : `${g.slice(0, 3).map(c => c.pref).join("・")}など${g.length}県`;
+    banner(sg === 3 ? `${who}の産業が発展！` : `${who}で物流が定着！`, sg === 3 ? `発展した県 <span class="big">${G.developed()}</span>/47` : `安定した配送が${GROW_WEEKS[0]}週続きました`, `${g[0].pref}の声：${voice(g[0], sg === 3 ? "s3" : "s2")}`); }
   G.fx.length = 0;
   if (now > aggAt) { aggAt = now + 900; for (const k in agg) { const a = agg[k]; if (a.fee > 0) pops.push({ c: +k, text: "+" + Math.round(a.fee) + "G", color: a.late ? "warn" : "good", born: now, dur: 1500 }); } agg = {}; }
   while (G.reports.length > seenWeeks) { const a = G.reports[seenWeeks], b = G.reports[seenWeeks - 1], p = a.rev - a.upkeep; seenWeeks++; renderWeekly();
@@ -339,12 +363,14 @@ function renderHint(){ const h = $("hint");
   else h.innerHTML = `<b>全国物流網が完成しました（第${G.completed.week}週）。</b><br>ここからは記録に挑戦できます。遵守率${GOAL * 100}%以上の週の記録：最高利益 ${G.records.profit === null ? "—" : fmtG(G.records.profit)} ／ 最少車両 ${G.records.trucks === null ? "—" : G.records.trucks + "台"}`; }
 let msgT = 0; function say(m){ if (!m) return; $("msg").textContent = m; clearTimeout(msgT); msgT = setTimeout(() => $("msg").textContent = "", 5000); }
 function hud(){ const d = Math.floor(G.t / 24) + 1, hh = Math.floor(G.t % 24), mm = Math.floor(G.t % 1 * 60 / 10) * 10, ot = G.onTime();
-  refreshStatus(); checkChanges(); if (!building) renderHint(); if (!hold) { renderHealth(); renderRouteList(); renderRegions(); if (sel >= 0) renderCity(); if (changes.some(ch => !ch.after)) renderResults(); } $("s-first").textContent = G.firsts.size + "/47";
+  refreshStatus(); checkChanges(); if (!building) renderHint(); if (!hold) { renderHealth(); renderRouteList(); renderRegions(); if (sel >= 0) renderCity(); if (changes.some(ch => !ch.after)) renderResults(); } $("s-first").textContent = G.firsts.size + "/47"; $("s-dev").textContent = G.developed() + "/47";
   $("s-time").textContent = `${d}日目 ${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`; $("s-money").style.color = G.money < 0 ? col.bad : "";
   $("s-ot").textContent = ot === null ? "—" : (ot * 100).toFixed(0) + "%"; $("s-ot").style.color = ot === null ? "" : ot >= 0.95 ? col.good : ot >= 0.85 ? col.warn : col.bad;
   $("s-lf").textContent = (G.lf * 100).toFixed(0) + "%"; $("s-cov").textContent = G.served().size + "/47";
   const out = []; for (let k = G.log.length - 1; k >= 0 && out.length < 9; k--) { const e = G.log[k];
-    if (e.kind === "f") { const o = G.cities[e.o]; out.push(`<div><span class="pill wk">初出荷</span><span>${o.pref}の${o.prod}</span></div>`); }
+    if (e.kind === "v") { const c = G.cities[e.c]; out.push(`<div><span class="pill ${e.tone === "late" ? "late" : e.tone === "jam" ? "warnc" : "ok"}">声</span><span>${c.pref}：${e.text}</span></div>`); }
+    else if (e.kind === "g") { const c = G.cities[e.c]; out.push(`<div><span class="pill wk">${e.stage === 3 ? "発展" : "定着"}</span><span>${kenOf(c)} ${"★".repeat(e.stage - 1)}</span></div>`); }
+    else if (e.kind === "f") { const o = G.cities[e.o]; out.push(`<div><span class="pill wk">初出荷</span><span>${o.pref}の${o.prod}</span></div>`); }
     else if (e.kind === "w") out.push(`<div><span class="pill wk">第${e.rep.week}週</span><span>配達 ${e.rep.n}箱・遵守率 ${(e.rep.rate * 100).toFixed(0)}%・収支 ${fmtG(e.rep.rev - e.rep.upkeep)}</span></div>`);
     else if (out.filter(s => s.includes("→")).length < 7) { const o = G.cities[e.o], dd = G.cities[e.d]; out.push(`<div><span class="pill ${e.ok ? "ok" : "late"}">${e.ok ? "定時" : "遅延"}</span><span>${o.pref}の${o.prod} → ${nm(dd)}</span></div>`); } }
   $("log").innerHTML = out.join(""); }
@@ -390,7 +416,7 @@ $("hint").addEventListener("click", e => { const id = e.target.id;
   else if (id === "b-undo") { building.pop(); renderHint(); }
   else if (id === "b-ok") { const before = G.served(), r0 = G.rate, err = G.addRoute(building);
     if (err) say(err); else { const added = building.filter(i => !before.has(i)).map(i => G.cities[i].pref), dq = (G.rate - r0) * 168; track("開通 " + shortR(G.routes[G.routes.length - 1]), building); building = null;
-      banner(added.length ? `路線開通！ ${added.join("・")}がつながりました` : "新しい路線が開通！", `つながった都道府県 ${before.size} → <span class="big">${G.served().size}</span>　／　配送需要 ${dq >= 0 ? "+" : ""}約${r10(dq)}箱/週${G.lastBonus ? `　／　開通祝い金 <span class="big">+${G.lastBonus.toLocaleString()}G</span>` : ""}`); }
+      banner(added.length ? `路線開通！ ${added.join("・")}がつながりました` : "新しい路線が開通！", `つながった都道府県 ${before.size} → <span class="big">${G.served().size}</span>　／　配送需要 ${dq >= 0 ? "+" : ""}約${r10(dq)}箱/週${G.lastBonus ? `　／　開通祝い金 <span class="big">+${G.lastBonus.toLocaleString()}G</span>` : ""}`, added.length ? `${added[0]}の声：${voice(G.cities[G.byPref[added[0]]], "open")}` : ""); }
     renderHint(); } });
 function minusTruck(r, big){ const stops = r.stops.slice(), nm = shortR(r), err = G.removeTruck(r, big); if (err) say(err); else { track("減便 " + nm, stops); banner(`減便 ${nm}`, `維持費 <span class="big">−${(big ? UPKEEP_BIG : UPKEEP_WEEK).toLocaleString()}G/週</span>　／　車両は車庫へ（売却するか、他の路線の増車に使えます）`); } }
 function plusTruck(r, big){ const h0 = G.headway(r), err = G.addTruck(r, false, 0, big); if (err) return say(err); track((big ? "大型を追加 " : "増便 ") + shortR(r), r.stops);

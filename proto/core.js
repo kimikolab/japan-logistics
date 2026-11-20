@@ -1,6 +1,6 @@
 // ===== ニッポン物流網 プロトタイプ: シミュレーション本体（画面に依存しない） =====
 const CAP = 10, CAP_BIG = 20, TRUCK_PRICE_BIG = 9000, UPKEEP_BIG = 3500, STOP_H = 0.5, GRACE = 6, MAX_STOPS = 6;
-const TRUCK_PRICE = 4000, UPKEEP_WEEK = 2000, REGION_PRICE = 10000, START_MONEY = 20000, TRUCK_SELL = 2000, FIRST_BONUS = 1000, OPEN_BONUS = 1000, GATE = 0.9, GOAL = 0.95, GOAL_WEEKS = 4;
+const TRUCK_PRICE = 4000, UPKEEP_WEEK = 2000, REGION_PRICE = 10000, START_MONEY = 20000, TRUCK_SELL = 2000, FIRST_BONUS = 1000, OPEN_BONUS = 1000, GATE = 0.9, GOAL = 0.95, GOAL_WEEKS = 4, GROW_RATE = 0.9, GROW_MIN = 5, GROW_WEEKS = [2, 6];   // 地域の発展: 安定した週が2週で定着、6週で発展
 const FEE_BASE = 10, FEE_PER_H = 4, DEMAND_K = 0.025;
 const REGIONS = ["北海道", "東北", "関東", "中部", "近畿", "中国", "四国", "九州・沖縄"];
 const ROUTE_COLORS = ["#d1495b", "#1f7a8c", "#e09f3e", "#5b5f97", "#3a7d44", "#b5179e", "#8d6e63", "#0077b6", "#bc6c25", "#6a4c93"];
@@ -8,7 +8,7 @@ const EDGE_SRC = "北海道-青森:8:sea,青森-岩手,青森-秋田,岩手-秋�
 
 function createGame(CITY_DATA, rng, saved) {
   rng = rng || Math.random;
-  const cities = CITY_DATA.map((c, i) => ({ ...c, i, wait: [], cancels: [] }));
+  const cities = CITY_DATA.map((c, i) => ({ ...c, i, wait: [], cancels: [], goodWeeks: 0, wkN: 0, wkOk: 0 }));
   const byPref = {}; cities.forEach(c => byPref[c.pref] = c.i);
   const hav = (a, b) => { const R = 6371, r = Math.PI / 180, dl = (b.lat - a.lat) * r, dn = (b.lon - a.lon) * r;
     const h = Math.sin(dl / 2) ** 2 + Math.cos(a.lat * r) * Math.cos(b.lat * r) * Math.sin(dn / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(h)); };
@@ -98,6 +98,7 @@ function createGame(CITY_DATA, rng, saved) {
 
   function judge(ok, s, delivered) {
     G.judged.push([G.t, ok]); G.week.n++; if (ok) G.week.ok++;
+    for (const k of [s.o, s.d]) { cities[k].wkN++; if (ok) cities[k].wkOk++; }   // 県ごとの実績（発着の両方で数える）
     if (delivered) { const fee = (FEE_BASE + FEE_PER_H * G.dist[s.o][s.d]) * (ok ? 1 : 0.5); G.money += fee; G.week.rev += fee; G.totalDelivered++;
       G.log.push({ t: G.t, kind: "d", o: s.o, d: s.d, ok }); if (G.log.length > 200) G.log.splice(0, 100);
       G.fx.push({ type: "deliver", c: s.d, fee, ok });
@@ -134,6 +135,9 @@ function createGame(CITY_DATA, rng, saved) {
       for (const c of cities) while (c.cancels.length && c.cancels[0] < G.t - 24) c.cancels.shift();
       while (G.judged.length && G.judged[0][0] < G.t - 72) G.judged.shift(); }
     if (G.t >= G.weekNo * 168) { const w = G.week; G.reports.push({ week: G.weekNo, n: w.n, rate: w.n ? w.ok / w.n : 1, rev: w.rev, upkeep: w.upkeep, bonus: w.bonus, trucks: truckCount() });
+      { const sv = served();   // 地域の発展: その県の荷物が遵守率90%以上だった週を数える（後退はしない）
+        for (const c of cities) { const before = stageOf(c, sv); if (sv.has(c.i) && c.wkN >= GROW_MIN && c.wkOk / c.wkN >= GROW_RATE) c.goodWeeks++; c.wkN = 0; c.wkOk = 0;
+          const after = stageOf(c, sv); if (after > before) { G.fx.push({ type: "grow", c: c.i, stage: after }); G.log.push({ t: G.t, kind: "g", c: c.i, stage: after }); } } }
       { const rp = G.reports[G.reports.length - 1], full = served().size === N && rp.rate >= GOAL; G.streak = full ? G.streak + 1 : 0;   // 完成条件: 全国接続かつ遵守率95%以上を4週連続
         if (full) { const pf = rp.rev - rp.upkeep; if (G.records.profit === null || pf > G.records.profit) G.records.profit = pf; if (G.records.trucks === null || rp.trucks < G.records.trucks) G.records.trucks = rp.trucks; }
         if (!G.completed && G.streak >= GOAL_WEEKS) { G.completed = { week: rp.week, trucks: rp.trucks }; G.fx.push({ type: "complete" }); } }
@@ -144,6 +148,9 @@ function createGame(CITY_DATA, rng, saved) {
   const served = () => { const s = new Set(); G.routes.forEach(r => r.stops.forEach(c => s.add(c))); return s; };
   const truckCount = () => G.routes.reduce((s, r) => s + r.trucks.length, 0);
 
+  // 発展段階: 0=未接続 1=物流開通 2=物流定着 3=地域産業発展
+  function stageOf(c, sv) { if (!(sv || served()).has(c.i)) return 0; return c.goodWeeks >= GROW_WEEKS[1] ? 3 : c.goodWeeks >= GROW_WEEKS[0] ? 2 : 1; }
+  const developed = () => { const sv = served(); return cities.filter(c => stageOf(c, sv) === 3).length; };
   // 都市の状態: 0=順調 1=混雑 2=遅延発生
   function cityStatus(c) {
     let overdue = 0, stranded = 0, top = null, tc = 0; const byR = {};
@@ -164,7 +171,7 @@ function createGame(CITY_DATA, rng, saved) {
     const ship = s => ({ o: s.o, d: s.d, born: s.born, due: s.due, path: s.path, rides: s.rides });
     return { v: SAVE_VERSION, t: G.t, money: G.money, unlocked: [...G.unlocked], judged: G.judged, lf: G.lf, week: G.week, garage: G.garage, garageBig: G.garageBig, streak: G.streak, completed: G.completed, records: G.records,
       weekNo: G.weekNo, reports: G.reports, log: G.log.slice(-40), nextRouteId: G.nextRouteId, sweepAt: G.sweepAt, firsts: [...G.firsts], totalDelivered: G.totalDelivered,
-      cities: cities.map(c => ({ w: c.wait.map(ship), x: c.cancels })),
+      cities: cities.map(c => ({ w: c.wait.map(ship), x: c.cancels, g: c.goodWeeks, n: c.wkN, k: c.wkOk })),
       routes: G.routes.map(r => ({ id: r.id, stops: r.stops, color: r.color, lf: r.lf, wkRev: r.wkRev, wkCost: r.wkCost, lastRev: r.lastRev, lastCost: r.lastCost,
         trucks: r.trucks.map(tr => ({ idx: tr.idx, to: tr.to, dir: tr.dir, state: tr.state, start: tr.start, until: tr.until, big: tr.big, load: tr.load.map(ship) })) })) };
   }
@@ -172,7 +179,7 @@ function createGame(CITY_DATA, rng, saved) {
     if (!d || d.v !== SAVE_VERSION || !Array.isArray(d.routes) || d.cities.length !== N) throw new Error("保存データの形式が合いません");
     for (const k of ["t", "money", "judged", "lf", "week", "garage", "garageBig", "streak", "completed", "records", "weekNo", "reports", "log", "nextRouteId", "sweepAt", "totalDelivered"]) G[k] = d[k];
     G.unlocked = new Set(d.unlocked); G.firsts = new Set(d.firsts); rebuildRoads();
-    d.cities.forEach((c, i) => { cities[i].wait = c.w; cities[i].cancels = c.x; });
+    d.cities.forEach((c, i) => { cities[i].wait = c.w; cities[i].cancels = c.x; cities[i].goodWeeks = c.g || 0; cities[i].wkN = c.n || 0; cities[i].wkOk = c.k || 0; });
     G.routes = d.routes.map(x => { const r = { id: x.id, stops: x.stops, color: x.color, trucks: [], lf: x.lf, wkRev: x.wkRev, wkCost: x.wkCost, lastRev: x.lastRev, lastCost: x.lastCost }; routeGeom(r);
       r.trucks = x.trucks.map(q => ({ route: r, idx: q.idx, to: q.to, dir: q.dir, state: q.state, start: q.start, until: q.until, big: !!q.big, cap: q.big ? CAP_BIG : CAP, load: q.load, leg: q.state === "move" ? r.legs[Math.min(q.idx, q.to)] : undefined })); return r; });
     replan();
@@ -184,6 +191,6 @@ function createGame(CITY_DATA, rng, saved) {
     addRoute(["神奈川", "東京", "埼玉", "群馬"].map(p => byPref[p]), true); addTruck(G.routes[0], true, G.routes[0].cycle / 2);
     addRoute(["千葉", "東京"].map(p => byPref[p]), true);
   }
-  return Object.assign(G, { step, addRoute, addTruck, removeTruck, removeRoute, unlockRegion, regionAdjacent, roadPath, headway, onTime, served, truckCount, byPref, cityStatus, forecast, sellTruck, editRoute, upkeepOf, serialize });
+  return Object.assign(G, { step, addRoute, addTruck, removeTruck, removeRoute, unlockRegion, regionAdjacent, roadPath, headway, onTime, served, truckCount, byPref, cityStatus, forecast, sellTruck, editRoute, upkeepOf, serialize, stageOf, developed });
 }
-if (typeof module !== "undefined") module.exports = { createGame, REGIONS, CAP_BIG, TRUCK_PRICE_BIG, UPKEEP_BIG, GATE, GOAL, GOAL_WEEKS, TRUCK_SELL, FIRST_BONUS, OPEN_BONUS, TRUCK_PRICE, REGION_PRICE, CAP, UPKEEP_WEEK, MAX_STOPS };
+if (typeof module !== "undefined") module.exports = { createGame, REGIONS, GROW_WEEKS, CAP_BIG, TRUCK_PRICE_BIG, UPKEEP_BIG, GATE, GOAL, GOAL_WEEKS, TRUCK_SELL, FIRST_BONUS, OPEN_BONUS, TRUCK_PRICE, REGION_PRICE, CAP, UPKEEP_WEEK, MAX_STOPS };

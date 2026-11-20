@@ -59,6 +59,8 @@ h2{font-size:13px;margin:0 0 6px;color:var(--muted);font-weight:700;letter-spaci
 .banner b{display:block;font-size:17px}
 .banner span{font-size:13px;color:var(--muted)}
 .banner .big{font-size:20px;font-weight:700;color:var(--accent)}
+.banner .voice,.voice{display:block;margin-top:4px;font-size:13px;color:var(--ink)}
+.stars{color:var(--box);letter-spacing:1px}
 @keyframes pop{from{transform:translateX(-50%) scale(.7);opacity:0}to{transform:translateX(-50%) scale(1);opacity:1}}
 @media (prefers-reduced-motion:reduce){.banner.show{animation:none}}
 .card{border:1px solid var(--line);border-radius:8px;padding:8px 10px}
@@ -98,6 +100,7 @@ footer{font-size:11px;color:var(--muted)}
   <div class="stat"><span>積載率</span><b id="s-lf">—</b></div>
   <div class="stat"><span>接続</span><b id="s-cov">0/47</b></div>
   <div class="stat"><span>特産品の初出荷</span><b id="s-first">0/47</b></div>
+  <div class="stat"><span>発展した県</span><b id="s-dev">0/47</b></div>
   <div class="stat"><span>全体</span><b id="s-all">—</b></div>
   <div class="speed" role="group" aria-label="速度">
     <button id="sp0" type="button">停止</button><button id="sp1" type="button">1倍</button><button id="sp3" type="button">3倍</button><button id="sp10" type="button">10倍</button>
@@ -132,7 +135,7 @@ footer{font-size:11px;color:var(--muted)}
 <script>
 // ===== ニッポン物流網 プロトタイプ: シミュレーション本体（画面に依存しない） =====
 const CAP = 10, CAP_BIG = 20, TRUCK_PRICE_BIG = 9000, UPKEEP_BIG = 3500, STOP_H = 0.5, GRACE = 6, MAX_STOPS = 6;
-const TRUCK_PRICE = 4000, UPKEEP_WEEK = 2000, REGION_PRICE = 10000, START_MONEY = 20000, TRUCK_SELL = 2000, FIRST_BONUS = 1000, OPEN_BONUS = 1000, GATE = 0.9, GOAL = 0.95, GOAL_WEEKS = 4;
+const TRUCK_PRICE = 4000, UPKEEP_WEEK = 2000, REGION_PRICE = 10000, START_MONEY = 20000, TRUCK_SELL = 2000, FIRST_BONUS = 1000, OPEN_BONUS = 1000, GATE = 0.9, GOAL = 0.95, GOAL_WEEKS = 4, GROW_RATE = 0.9, GROW_MIN = 5, GROW_WEEKS = [2, 6];   // 地域の発展: 安定した週が2週で定着、6週で発展
 const FEE_BASE = 10, FEE_PER_H = 4, DEMAND_K = 0.025;
 const REGIONS = ["北海道", "東北", "関東", "中部", "近畿", "中国", "四国", "九州・沖縄"];
 const ROUTE_COLORS = ["#d1495b", "#1f7a8c", "#e09f3e", "#5b5f97", "#3a7d44", "#b5179e", "#8d6e63", "#0077b6", "#bc6c25", "#6a4c93"];
@@ -140,7 +143,7 @@ const EDGE_SRC = "北海道-青森:8:sea,青森-岩手,青森-秋田,岩手-秋�
 
 function createGame(CITY_DATA, rng, saved) {
   rng = rng || Math.random;
-  const cities = CITY_DATA.map((c, i) => ({ ...c, i, wait: [], cancels: [] }));
+  const cities = CITY_DATA.map((c, i) => ({ ...c, i, wait: [], cancels: [], goodWeeks: 0, wkN: 0, wkOk: 0 }));
   const byPref = {}; cities.forEach(c => byPref[c.pref] = c.i);
   const hav = (a, b) => { const R = 6371, r = Math.PI / 180, dl = (b.lat - a.lat) * r, dn = (b.lon - a.lon) * r;
     const h = Math.sin(dl / 2) ** 2 + Math.cos(a.lat * r) * Math.cos(b.lat * r) * Math.sin(dn / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(h)); };
@@ -230,6 +233,7 @@ function createGame(CITY_DATA, rng, saved) {
 
   function judge(ok, s, delivered) {
     G.judged.push([G.t, ok]); G.week.n++; if (ok) G.week.ok++;
+    for (const k of [s.o, s.d]) { cities[k].wkN++; if (ok) cities[k].wkOk++; }   // 県ごとの実績（発着の両方で数える）
     if (delivered) { const fee = (FEE_BASE + FEE_PER_H * G.dist[s.o][s.d]) * (ok ? 1 : 0.5); G.money += fee; G.week.rev += fee; G.totalDelivered++;
       G.log.push({ t: G.t, kind: "d", o: s.o, d: s.d, ok }); if (G.log.length > 200) G.log.splice(0, 100);
       G.fx.push({ type: "deliver", c: s.d, fee, ok });
@@ -266,6 +270,9 @@ function createGame(CITY_DATA, rng, saved) {
       for (const c of cities) while (c.cancels.length && c.cancels[0] < G.t - 24) c.cancels.shift();
       while (G.judged.length && G.judged[0][0] < G.t - 72) G.judged.shift(); }
     if (G.t >= G.weekNo * 168) { const w = G.week; G.reports.push({ week: G.weekNo, n: w.n, rate: w.n ? w.ok / w.n : 1, rev: w.rev, upkeep: w.upkeep, bonus: w.bonus, trucks: truckCount() });
+      { const sv = served();   // 地域の発展: その県の荷物が遵守率90%以上だった週を数える（後退はしない）
+        for (const c of cities) { const before = stageOf(c, sv); if (sv.has(c.i) && c.wkN >= GROW_MIN && c.wkOk / c.wkN >= GROW_RATE) c.goodWeeks++; c.wkN = 0; c.wkOk = 0;
+          const after = stageOf(c, sv); if (after > before) { G.fx.push({ type: "grow", c: c.i, stage: after }); G.log.push({ t: G.t, kind: "g", c: c.i, stage: after }); } } }
       { const rp = G.reports[G.reports.length - 1], full = served().size === N && rp.rate >= GOAL; G.streak = full ? G.streak + 1 : 0;   // 完成条件: 全国接続かつ遵守率95%以上を4週連続
         if (full) { const pf = rp.rev - rp.upkeep; if (G.records.profit === null || pf > G.records.profit) G.records.profit = pf; if (G.records.trucks === null || rp.trucks < G.records.trucks) G.records.trucks = rp.trucks; }
         if (!G.completed && G.streak >= GOAL_WEEKS) { G.completed = { week: rp.week, trucks: rp.trucks }; G.fx.push({ type: "complete" }); } }
@@ -276,6 +283,9 @@ function createGame(CITY_DATA, rng, saved) {
   const served = () => { const s = new Set(); G.routes.forEach(r => r.stops.forEach(c => s.add(c))); return s; };
   const truckCount = () => G.routes.reduce((s, r) => s + r.trucks.length, 0);
 
+  // 発展段階: 0=未接続 1=物流開通 2=物流定着 3=地域産業発展
+  function stageOf(c, sv) { if (!(sv || served()).has(c.i)) return 0; return c.goodWeeks >= GROW_WEEKS[1] ? 3 : c.goodWeeks >= GROW_WEEKS[0] ? 2 : 1; }
+  const developed = () => { const sv = served(); return cities.filter(c => stageOf(c, sv) === 3).length; };
   // 都市の状態: 0=順調 1=混雑 2=遅延発生
   function cityStatus(c) {
     let overdue = 0, stranded = 0, top = null, tc = 0; const byR = {};
@@ -296,7 +306,7 @@ function createGame(CITY_DATA, rng, saved) {
     const ship = s => ({ o: s.o, d: s.d, born: s.born, due: s.due, path: s.path, rides: s.rides });
     return { v: SAVE_VERSION, t: G.t, money: G.money, unlocked: [...G.unlocked], judged: G.judged, lf: G.lf, week: G.week, garage: G.garage, garageBig: G.garageBig, streak: G.streak, completed: G.completed, records: G.records,
       weekNo: G.weekNo, reports: G.reports, log: G.log.slice(-40), nextRouteId: G.nextRouteId, sweepAt: G.sweepAt, firsts: [...G.firsts], totalDelivered: G.totalDelivered,
-      cities: cities.map(c => ({ w: c.wait.map(ship), x: c.cancels })),
+      cities: cities.map(c => ({ w: c.wait.map(ship), x: c.cancels, g: c.goodWeeks, n: c.wkN, k: c.wkOk })),
       routes: G.routes.map(r => ({ id: r.id, stops: r.stops, color: r.color, lf: r.lf, wkRev: r.wkRev, wkCost: r.wkCost, lastRev: r.lastRev, lastCost: r.lastCost,
         trucks: r.trucks.map(tr => ({ idx: tr.idx, to: tr.to, dir: tr.dir, state: tr.state, start: tr.start, until: tr.until, big: tr.big, load: tr.load.map(ship) })) })) };
   }
@@ -304,7 +314,7 @@ function createGame(CITY_DATA, rng, saved) {
     if (!d || d.v !== SAVE_VERSION || !Array.isArray(d.routes) || d.cities.length !== N) throw new Error("保存データの形式が合いません");
     for (const k of ["t", "money", "judged", "lf", "week", "garage", "garageBig", "streak", "completed", "records", "weekNo", "reports", "log", "nextRouteId", "sweepAt", "totalDelivered"]) G[k] = d[k];
     G.unlocked = new Set(d.unlocked); G.firsts = new Set(d.firsts); rebuildRoads();
-    d.cities.forEach((c, i) => { cities[i].wait = c.w; cities[i].cancels = c.x; });
+    d.cities.forEach((c, i) => { cities[i].wait = c.w; cities[i].cancels = c.x; cities[i].goodWeeks = c.g || 0; cities[i].wkN = c.n || 0; cities[i].wkOk = c.k || 0; });
     G.routes = d.routes.map(x => { const r = { id: x.id, stops: x.stops, color: x.color, trucks: [], lf: x.lf, wkRev: x.wkRev, wkCost: x.wkCost, lastRev: x.lastRev, lastCost: x.lastCost }; routeGeom(r);
       r.trucks = x.trucks.map(q => ({ route: r, idx: q.idx, to: q.to, dir: q.dir, state: q.state, start: q.start, until: q.until, big: !!q.big, cap: q.big ? CAP_BIG : CAP, load: q.load, leg: q.state === "move" ? r.legs[Math.min(q.idx, q.to)] : undefined })); return r; });
     replan();
@@ -316,7 +326,7 @@ function createGame(CITY_DATA, rng, saved) {
     addRoute(["神奈川", "東京", "埼玉", "群馬"].map(p => byPref[p]), true); addTruck(G.routes[0], true, G.routes[0].cycle / 2);
     addRoute(["千葉", "東京"].map(p => byPref[p]), true);
   }
-  return Object.assign(G, { step, addRoute, addTruck, removeTruck, removeRoute, unlockRegion, regionAdjacent, roadPath, headway, onTime, served, truckCount, byPref, cityStatus, forecast, sellTruck, editRoute, upkeepOf, serialize });
+  return Object.assign(G, { step, addRoute, addTruck, removeTruck, removeRoute, unlockRegion, regionAdjacent, roadPath, headway, onTime, served, truckCount, byPref, cityStatus, forecast, sellTruck, editRoute, upkeepOf, serialize, stageOf, developed });
 }
 
 const CITY_DATA = [{"id":"01","pref":"北海道","name":"札幌","lat":43.06,"lon":141.35,"reg":0,"mass":4,"prod":"じゃがいも","x":495.1,"y":92.2},{"id":"02","pref":"青森","name":"青森","lat":40.82,"lon":140.74,"reg":1,"mass":1.2,"prod":"りんご","x":483.5,"y":158.9},{"id":"03","pref":"岩手","name":"盛岡","lat":39.7,"lon":141.15,"reg":1,"mass":1.2,"prod":"わかめ","x":493.7,"y":191.9},{"id":"04","pref":"宮城","name":"仙台","lat":38.27,"lon":140.87,"reg":1,"mass":3,"prod":"笹かまぼこ","x":488.4,"y":234.4},{"id":"05","pref":"秋田","name":"秋田","lat":39.72,"lon":140.1,"reg":1,"mass":1.1,"prod":"米","x":469.7,"y":191.8},{"id":"06","pref":"山形","name":"山形","lat":38.24,"lon":140.36,"reg":1,"mass":1.1,"prod":"さくらんぼ","x":476.5,"y":235.6},{"id":"07","pref":"福島","name":"福島","lat":37.75,"lon":140.47,"reg":1,"mass":1.3,"prod":"もも","x":479.4,"y":250.1},{"id":"08","pref":"茨城","name":"水戸","lat":36.34,"lon":140.45,"reg":2,"mass":1.5,"prod":"納豆","x":479.8,"y":291.9},{"id":"09","pref":"栃木","name":"宇都宮","lat":36.57,"lon":139.88,"reg":2,"mass":1.5,"prod":"いちご","x":466.1,"y":285.3},{"id":"10","pref":"群馬","name":"前橋","lat":36.39,"lon":139.06,"reg":2,"mass":1.5,"prod":"こんにゃく","x":446.5,"y":290.8},{"id":"11","pref":"埼玉","name":"さいたま","lat":35.86,"lon":139.65,"reg":2,"mass":4,"prod":"ねぎ","x":460.8,"y":306.4},{"id":"12","pref":"千葉","name":"千葉","lat":35.6,"lon":140.12,"reg":2,"mass":3.5,"prod":"落花生","x":472.2,"y":314},{"id":"13","pref":"東京","name":"東京","lat":35.69,"lon":139.69,"reg":2,"mass":10,"prod":"書籍","x":461.8,"y":311.5},{"id":"14","pref":"神奈川","name":"横浜","lat":35.45,"lon":139.64,"reg":2,"mass":6,"prod":"しゅうまい","x":460.7,"y":318.6},{"id":"15","pref":"新潟","name":"新潟","lat":37.9,"lon":139.02,"reg":3,"mass":2,"prod":"米","x":445.3,"y":246.1},{"id":"16","pref":"富山","name":"富山","lat":36.7,"lon":137.21,"reg":3,"mass":1.2,"prod":"ほたるいか","x":402.5,"y":281.5},{"id":"17","pref":"石川","name":"金沢","lat":36.59,"lon":136.63,"reg":3,"mass":1.5,"prod":"金箔","x":388.6,"y":284.5},{"id":"18","pref":"福井","name":"福井","lat":36.07,"lon":136.22,"reg":3,"mass":1,"prod":"めがね","x":378.5,"y":299.7},{"id":"19","pref":"山梨","name":"甲府","lat":35.66,"lon":138.57,"reg":3,"mass":1,"prod":"ぶどう","x":434.9,"y":312.5},{"id":"20","pref":"長野","name":"長野","lat":36.65,"lon":138.18,"reg":3,"mass":1.5,"prod":"レタス","x":425.6,"y":283.2},{"id":"21","pref":"岐阜","name":"岐阜","lat":35.39,"lon":136.72,"reg":3,"mass":1.5,"prod":"刃物","x":390.1,"y":320.2},{"id":"22","pref":"静岡","name":"静岡","lat":34.98,"lon":138.38,"reg":3,"mass":2.5,"prod":"お茶","x":430.3,"y":332.7},{"id":"23","pref":"愛知","name":"名古屋","lat":35.18,"lon":136.91,"reg":3,"mass":5,"prod":"自動車部品","x":394.6,"y":326.5},{"id":"24","pref":"三重","name":"津","lat":34.73,"lon":136.51,"reg":4,"mass":1.3,"prod":"真珠","x":384.6,"y":339.6},{"id":"25","pref":"滋賀","name":"大津","lat":35,"lon":135.87,"reg":4,"mass":1.2,"prod":"近江牛","x":369.3,"y":331.3},{"id":"26","pref":"京都","name":"京都","lat":35.02,"lon":135.76,"reg":4,"mass":3,"prod":"八つ橋","x":366.6,"y":330.6},{"id":"27","pref":"大阪","name":"大阪","lat":34.69,"lon":135.52,"reg":4,"mass":7,"prod":"医薬品","x":360.5,"y":340.2},{"id":"28","pref":"兵庫","name":"神戸","lat":34.69,"lon":135.18,"reg":4,"mass":3.5,"prod":"日本酒","x":352.2,"y":340},{"id":"29","pref":"奈良","name":"奈良","lat":34.69,"lon":135.83,"reg":4,"mass":1.2,"prod":"柿","x":368,"y":340.4},{"id":"30","pref":"和歌山","name":"和歌山","lat":34.23,"lon":135.17,"reg":4,"mass":1,"prod":"みかん","x":351.5,"y":353.6},{"id":"31","pref":"鳥取","name":"鳥取","lat":35.5,"lon":134.24,"reg":5,"mass":0.8,"prod":"梨","x":330.3,"y":315.1},{"id":"32","pref":"島根","name":"松江","lat":35.47,"lon":133.05,"reg":5,"mass":0.8,"prod":"しじみ","x":301.6,"y":314.5},{"id":"33","pref":"岡山","name":"岡山","lat":34.66,"lon":133.93,"reg":5,"mass":2,"prod":"デニム","x":321.7,"y":339.6},{"id":"34","pref":"広島","name":"広島","lat":34.4,"lon":132.46,"reg":5,"mass":3,"prod":"かき","x":285.4,"y":345.4},{"id":"35","pref":"山口","name":"山口","lat":34.19,"lon":131.47,"reg":5,"mass":1.1,"prod":"ふぐ","x":260.8,"y":350},{"id":"36","pref":"徳島","name":"徳島","lat":34.07,"lon":134.56,"reg":6,"mass":0.9,"prod":"すだち","x":336.4,"y":357.8},{"id":"37","pref":"香川","name":"高松","lat":34.34,"lon":134.04,"reg":6,"mass":1.1,"prod":"うどん","x":323.9,"y":349.2},{"id":"38","pref":"愛媛","name":"松山","lat":33.84,"lon":132.77,"reg":6,"mass":1.3,"prod":"タオル","x":292.1,"y":362.5},{"id":"39","pref":"高知","name":"高知","lat":33.56,"lon":133.53,"reg":6,"mass":0.9,"prod":"かつお","x":310.3,"y":371.8},{"id":"40","pref":"福岡","name":"福岡","lat":33.61,"lon":130.42,"reg":7,"mass":4,"prod":"明太子","x":233.8,"y":365.3},{"id":"41","pref":"佐賀","name":"佐賀","lat":33.25,"lon":130.3,"reg":7,"mass":0.9,"prod":"のり","x":230,"y":375.7},{"id":"42","pref":"長崎","name":"長崎","lat":32.74,"lon":129.87,"reg":7,"mass":1.2,"prod":"カステラ","x":218.1,"y":389.9},{"id":"43","pref":"熊本","name":"熊本","lat":32.79,"lon":130.74,"reg":7,"mass":2,"prod":"トマト","x":239.8,"y":390.2},{"id":"44","pref":"大分","name":"大分","lat":33.24,"lon":131.61,"reg":7,"mass":1.1,"prod":"しいたけ","x":262.3,"y":378.4},{"id":"45","pref":"宮崎","name":"宮崎","lat":31.91,"lon":131.42,"reg":7,"mass":1.1,"prod":"マンゴー","x":255,"y":417.5},{"id":"46","pref":"鹿児島","name":"鹿児島","lat":31.56,"lon":130.56,"reg":7,"mass":1.5,"prod":"さつまいも","x":232.6,"y":426.3},{"id":"47","pref":"沖縄","name":"那覇","lat":26.21,"lon":127.68,"reg":7,"mass":1.4,"prod":"パイナップル","x":144.9,"y":577.6}];
@@ -398,6 +408,7 @@ function draw(){
     if (lv) { const tx = lv === 2 ? "遅延" : "混雑"; ctx.font = "700 11px " + FONT; const w = ctx.measureText(tx).width + 10; ctx.fillStyle = lc; ctx.beginPath(); ctx.roundRect(x + 8, y - 22, w, 16, 8); ctx.fill(); ctx.fillStyle = col.panel; ctx.textBaseline = "middle"; ctx.fillText(tx, x + 13, y - 13.5); }
     if (c.i === sel && selFound) { ctx.beginPath(); ctx.arc(x, y, 11, 0, 6.3); ctx.strokeStyle = col.accent; ctx.lineWidth = 2; ctx.stroke(); }
     if (!sv && un && view.s > 1.6) { ctx.font = "500 11px " + FONT; ctx.fillStyle = col.warn; ctx.textBaseline = "middle"; ctx.fillText("見込み 約" + r10(G.forecast([c.i])) + "箱/週", x + 10, y + 1); }
+    if (sv && c.goodWeeks >= GROW_WEEKS[0]) { ctx.font = "700 14px " + FONT; ctx.textBaseline = "middle"; ctx.textAlign = "center"; const sx_ = "★".repeat(c.goodWeeks >= GROW_WEEKS[1] ? 2 : 1); ctx.lineWidth = 3; ctx.strokeStyle = col.land; ctx.strokeText(sx_, x - 3, y + 15); ctx.fillStyle = col.box; ctx.fillText(sx_, x - 3, y + 15); ctx.textAlign = "left"; }
     ctx.beginPath(); ctx.arc(x, y, sv ? 5 : un ? 5 : 2.5, 0, 6.3);
     if (sv) { ctx.fillStyle = lc; ctx.fill(); ctx.strokeStyle = col.panel; ctx.lineWidth = 1.5; ctx.stroke(); }
     else if (un) { ctx.fillStyle = col.panel; ctx.fill(); ctx.strokeStyle = col.warn; ctx.lineWidth = 2.5; ctx.stroke(); }
@@ -427,9 +438,22 @@ const r10 = n => n < 10 ? Math.round(n) : Math.round(n / 10) * 10;
 const nm = c => prefMode ? c.pref : c.name;
 const kenOf = c => c.pref + (c.pref === "北海道" ? "" : c.pref === "東京" ? "都" : c.pref === "大阪" || c.pref === "京都" ? "府" : "県");
 const shortR = r => nm(G.cities[r.stops[0]]) + "〜" + nm(G.cities[r.stops[r.stops.length - 1]]);
-function banner(title, sub){ banners.push([title, sub || ""]); }
+function banner(title, sub, voice){ banners.push([title, sub || "", voice || ""]); }
+// 地域の声: 物流の状態に応じた住民・生産者のひとこと（特産品を織り込む）
+const VOICES = {
+  open: ["これで{p}も遠くの町に届けられるね！", "{p}を待っている人に、やっと届けられます。"],
+  first: ["うちの{p}が{d}に届いたって！", "{d}まで{p}が届くようになったんだね。"],
+  s2: ["最近は{p}の注文が増えて、毎日忙しいよ。", "{p}の出荷が安定してきました。ありがたいことです。"],
+  s3: ["出荷が順調だから、{p}の作業場を広げることになったんだ。", "{p}の取引先が増えて、人を増やすことにしました。"],
+  jam: ["注文は増えているんだけど、荷物がなかなか出発しないんだよね。", "倉庫に{p}の箱が積み上がってきました……。"],
+  late: ["せっかくの{p}が、予定の日に届かなかったみたい……。", "{p}の到着が遅れて、取引先に謝ってきました。"],
+  fixed: ["最近は予定どおり届くようになったよ。助かっている！", "{p}がまた順調に出ていくようになりました。"],
+  ok: ["{p}は今日も順調に出荷できています。", "荷物が予定どおりに動いていて、安心です。"] };
+const voice = (c, kind, d) => { const a = VOICES[kind]; return "「" + a[c.i % a.length].replace("{p}", c.prod).replace("{d}", d ? d.name : "") + "」"; };
+const STAGE = ["未接続", "物流開通", "物流定着", "地域産業発展"], stars = n => n >= 2 ? `<span class="stars">${"★".repeat(n - 1)}</span>` : "";
+const lastVoice = {}; function say2(c, kind){ if (G.t - (lastVoice[c.i] ?? -99) < 48) return; lastVoice[c.i] = G.t; G.log.push({ t: G.t, kind: "v", c: c.i, text: voice(c, kind), tone: kind }); }
 function pumpBanner(now){ const b = $("banner"); if (now < bannerUntil) return; if (!banners.length) { b.classList.remove("show"); return; }
-  const [t, s] = banners.shift(); b.classList.remove("show"); void b.offsetWidth; b.innerHTML = `<b>${t}</b><span>${s}</span>`; b.classList.add("show"); bannerUntil = now + 3200; }
+  const [t, s, v] = banners.shift(); b.classList.remove("show"); void b.offsetWidth; b.innerHTML = `<b>${t}</b><span>${s}</span>${v ? `<span class="voice">${v}</span>` : ""}`; b.classList.add("show"); bannerUntil = now + 3200; }
 function reason(c, st){
   if (st.level === 0) return "荷物は順調に流れています。";
   if (st.stranded > st.topCount) return `行き先まで路線がつながっていない荷物が${st.stranded}箱あります。`;
@@ -453,7 +477,8 @@ function renderResults(){ const arrow = (b, a) => a < b ? `<span class="up">▼$
     : `<p style="margin:0;font-size:12px;color:var(--muted)">路線や車両を変えると、1日後にその沿線の変更前後がここに出ます。納期切れは直近1日の件数です。</p>`; }
 function refreshStatus(){ const sv = G.served();
   for (const c of G.cities) { if (!sv.has(c.i)) { stat[c.i] = null; continue; } const st = G.cityStatus(c); stat[c.i] = st;
-    if (st.level) { if (!badSince[c.i]) badSince[c.i] = G.t; } else { if (badSince[c.i] && G.t - badSince[c.i] > 3) { pops.push({ c: c.i, text: "混雑解消！", color: "good", born: performance.now(), dur: 2600, big: true }); } badSince[c.i] = 0; } } }
+    if (st.level) { if (!badSince[c.i]) badSince[c.i] = G.t; else if (G.t - badSince[c.i] > 3 && (prevLv[c.i] || 0) < st.level) { prevLv[c.i] = st.level; say2(c, st.level === 2 ? "late" : "jam"); } }
+    else { if (badSince[c.i] && G.t - badSince[c.i] > 3) { pops.push({ c: c.i, text: "混雑解消！", color: "good", born: performance.now(), dur: 2600, big: true }); lastVoice[c.i] = -99; say2(c, "fixed"); } badSince[c.i] = 0; prevLv[c.i] = 0; } } }
 function renderHealth(){ const sv = G.served(), prob = G.cities.filter(c => stat[c.i] && stat[c.i].level).sort((a, b) => stat[b.i].level - stat[a.i].level || stat[b.i].n - stat[a.i].n);
   const miss = G.cities.filter(c => G.unlocked.has(c.reg) && !sv.has(c.i)).map(c => [c, G.forecast([c.i])]).sort((a, b) => b[1] - a[1]);
   let next;
@@ -471,6 +496,8 @@ function renderHealth(){ const sv = G.served(), prob = G.cities.filter(c => stat
     `<p style="margin:6px 0 0;font-size:12px;color:var(--muted)">順調 ${sv.size - prob.length}都市 ／ 混雑 ${warn}都市 ／ 遅延 ${bad}都市</p>${fin}<button type="button" id="hint-tg" style="margin-top:6px">${hintOn ? "ヒントを隠す" : "ヒントを見る"}</button>`; }
 function renderCity(){ const sec = $("city-sec"); if (sel < 0) { sec.hidden = true; return; } sec.hidden = false; const c = G.cities[sel], sv = G.served().has(c.i), un = G.unlocked.has(c.reg);
   let h = `<h3>${kenOf(c)}　${c.name}</h3><div style="font-size:12px;color:var(--muted)">${REGIONS[c.reg]}地方・特産：${c.prod}</div>`;
+  if (sv) { const sg = G.stageOf(c), need = sg === 1 ? GROW_WEEKS[0] : sg === 2 ? GROW_WEEKS[1] : 0, st0 = stat[c.i] || G.cityStatus(c);
+    h += `<p style="font-size:12px;margin:4px 0"><b>${STAGE[sg]}</b> ${stars(sg)}　${need ? `安定した週 ${c.goodWeeks}/${need}（遵守率90%以上の週を数えます）` : "この県の産業は発展しました"}<span class="voice">${voice(c, st0.level === 2 ? "late" : st0.level === 1 ? "jam" : sg === 3 ? "s3" : sg === 2 ? "s2" : "ok")}</span></p>`; }
   if (!selFound) h += `<p style="font-size:12px">地図でこの都市を探して押してみてください。 <button type="button" data-a="reveal">場所を見る</button></p>`;
   if (!un) h += `<p>${REGIONS[c.reg]}地方はまだ進出していません。</p>`;
   else if (!sv) h += `<p><span class="pill warnc">未接続</span> つなぐと、見込み 約${r10(G.forecast([c.i]))}箱/週 の荷物が動きます。</p><button type="button" class="primary" data-a="start">ここから路線を作る</button>`;
@@ -490,10 +517,14 @@ function renderWeekly(){ const R = G.reports, a = R[R.length - 1], b = R[R.lengt
     <tr><td>車両維持費</td><td>${fmtG(a.upkeep)}</td><td>${b ? fmtG(a.upkeep - b.upkeep).replace(/^(?!-)/, "+") : "—"}</td></tr>
     <tr><td>祝い金（開通・初出荷）</td><td>${fmtG(a.bonus || 0)}</td><td></td></tr>
     <tr><td><b>利益（祝い金を除く）</b></td><td><b>${fmtG(pf(a))}</b></td><td>${d(pf(a), b && pf(b), fmtG)}</td></tr></table>`; }
-function consumeFx(now){ for (const e of G.fx) {
+function consumeFx(now){ const grows = []; for (const e of G.fx) {
     if (e.type === "deliver") { const a = agg[e.c] = agg[e.c] || { fee: 0, late: 0 }; a.fee += e.fee; if (!e.ok) a.late++; }
     else if (e.type === "complete") banner("全国物流網が完成！", `47都道府県で納期遵守率${GOAL * 100}%以上を${GOAL_WEEKS}週達成　／　車両 <span class="big">${G.completed.trucks}台</span>`);
-    else if (e.type === "first") { const o = G.cities[e.o], d = G.cities[e.d]; banner(`${kenOf(o)}の${o.prod}が初出荷！ 祝い金 +${FIRST_BONUS.toLocaleString()}G`, `${o.name} → ${d.name}　／　特産品の初出荷 <span class="big">${G.firsts.size}</span>/47`); } }
+    else if (e.type === "first") { const o = G.cities[e.o], d = G.cities[e.d]; banner(`${kenOf(o)}の${o.prod}が初出荷！ 祝い金 +${FIRST_BONUS.toLocaleString()}G`, `${o.name} → ${d.name}　／　特産品の初出荷 <span class="big">${G.firsts.size}</span>/47`, `${o.pref}の声：${voice(o, "first", d)}`); }
+    else if (e.type === "grow") { grows.push(e); pops.push({ c: e.c, text: "★".repeat(e.stage - 1), color: "warn", born: now, dur: 3000, big: true }); } }
+  for (const sg of [3, 2]) { const g = grows.filter(e => e.stage === sg).map(e => G.cities[e.c]); if (!g.length) continue;   // 同じ週の発展は1つのお知らせにまとめる
+    const who = g.length <= 3 ? g.map(kenOf).join("・") : `${g.slice(0, 3).map(c => c.pref).join("・")}など${g.length}県`;
+    banner(sg === 3 ? `${who}の産業が発展！` : `${who}で物流が定着！`, sg === 3 ? `発展した県 <span class="big">${G.developed()}</span>/47` : `安定した配送が${GROW_WEEKS[0]}週続きました`, `${g[0].pref}の声：${voice(g[0], sg === 3 ? "s3" : "s2")}`); }
   G.fx.length = 0;
   if (now > aggAt) { aggAt = now + 900; for (const k in agg) { const a = agg[k]; if (a.fee > 0) pops.push({ c: +k, text: "+" + Math.round(a.fee) + "G", color: a.late ? "warn" : "good", born: now, dur: 1500 }); } agg = {}; }
   while (G.reports.length > seenWeeks) { const a = G.reports[seenWeeks], b = G.reports[seenWeeks - 1], p = a.rev - a.upkeep; seenWeeks++; renderWeekly();
@@ -527,12 +558,14 @@ function renderHint(){ const h = $("hint");
   else h.innerHTML = `<b>全国物流網が完成しました（第${G.completed.week}週）。</b><br>ここからは記録に挑戦できます。遵守率${GOAL * 100}%以上の週の記録：最高利益 ${G.records.profit === null ? "—" : fmtG(G.records.profit)} ／ 最少車両 ${G.records.trucks === null ? "—" : G.records.trucks + "台"}`; }
 let msgT = 0; function say(m){ if (!m) return; $("msg").textContent = m; clearTimeout(msgT); msgT = setTimeout(() => $("msg").textContent = "", 5000); }
 function hud(){ const d = Math.floor(G.t / 24) + 1, hh = Math.floor(G.t % 24), mm = Math.floor(G.t % 1 * 60 / 10) * 10, ot = G.onTime();
-  refreshStatus(); checkChanges(); if (!building) renderHint(); if (!hold) { renderHealth(); renderRouteList(); renderRegions(); if (sel >= 0) renderCity(); if (changes.some(ch => !ch.after)) renderResults(); } $("s-first").textContent = G.firsts.size + "/47";
+  refreshStatus(); checkChanges(); if (!building) renderHint(); if (!hold) { renderHealth(); renderRouteList(); renderRegions(); if (sel >= 0) renderCity(); if (changes.some(ch => !ch.after)) renderResults(); } $("s-first").textContent = G.firsts.size + "/47"; $("s-dev").textContent = G.developed() + "/47";
   $("s-time").textContent = `${d}日目 ${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`; $("s-money").style.color = G.money < 0 ? col.bad : "";
   $("s-ot").textContent = ot === null ? "—" : (ot * 100).toFixed(0) + "%"; $("s-ot").style.color = ot === null ? "" : ot >= 0.95 ? col.good : ot >= 0.85 ? col.warn : col.bad;
   $("s-lf").textContent = (G.lf * 100).toFixed(0) + "%"; $("s-cov").textContent = G.served().size + "/47";
   const out = []; for (let k = G.log.length - 1; k >= 0 && out.length < 9; k--) { const e = G.log[k];
-    if (e.kind === "f") { const o = G.cities[e.o]; out.push(`<div><span class="pill wk">初出荷</span><span>${o.pref}の${o.prod}</span></div>`); }
+    if (e.kind === "v") { const c = G.cities[e.c]; out.push(`<div><span class="pill ${e.tone === "late" ? "late" : e.tone === "jam" ? "warnc" : "ok"}">声</span><span>${c.pref}：${e.text}</span></div>`); }
+    else if (e.kind === "g") { const c = G.cities[e.c]; out.push(`<div><span class="pill wk">${e.stage === 3 ? "発展" : "定着"}</span><span>${kenOf(c)} ${"★".repeat(e.stage - 1)}</span></div>`); }
+    else if (e.kind === "f") { const o = G.cities[e.o]; out.push(`<div><span class="pill wk">初出荷</span><span>${o.pref}の${o.prod}</span></div>`); }
     else if (e.kind === "w") out.push(`<div><span class="pill wk">第${e.rep.week}週</span><span>配達 ${e.rep.n}箱・遵守率 ${(e.rep.rate * 100).toFixed(0)}%・収支 ${fmtG(e.rep.rev - e.rep.upkeep)}</span></div>`);
     else if (out.filter(s => s.includes("→")).length < 7) { const o = G.cities[e.o], dd = G.cities[e.d]; out.push(`<div><span class="pill ${e.ok ? "ok" : "late"}">${e.ok ? "定時" : "遅延"}</span><span>${o.pref}の${o.prod} → ${nm(dd)}</span></div>`); } }
   $("log").innerHTML = out.join(""); }
@@ -578,7 +611,7 @@ $("hint").addEventListener("click", e => { const id = e.target.id;
   else if (id === "b-undo") { building.pop(); renderHint(); }
   else if (id === "b-ok") { const before = G.served(), r0 = G.rate, err = G.addRoute(building);
     if (err) say(err); else { const added = building.filter(i => !before.has(i)).map(i => G.cities[i].pref), dq = (G.rate - r0) * 168; track("開通 " + shortR(G.routes[G.routes.length - 1]), building); building = null;
-      banner(added.length ? `路線開通！ ${added.join("・")}がつながりました` : "新しい路線が開通！", `つながった都道府県 ${before.size} → <span class="big">${G.served().size}</span>　／　配送需要 ${dq >= 0 ? "+" : ""}約${r10(dq)}箱/週${G.lastBonus ? `　／　開通祝い金 <span class="big">+${G.lastBonus.toLocaleString()}G</span>` : ""}`); }
+      banner(added.length ? `路線開通！ ${added.join("・")}がつながりました` : "新しい路線が開通！", `つながった都道府県 ${before.size} → <span class="big">${G.served().size}</span>　／　配送需要 ${dq >= 0 ? "+" : ""}約${r10(dq)}箱/週${G.lastBonus ? `　／　開通祝い金 <span class="big">+${G.lastBonus.toLocaleString()}G</span>` : ""}`, added.length ? `${added[0]}の声：${voice(G.cities[G.byPref[added[0]]], "open")}` : ""); }
     renderHint(); } });
 function minusTruck(r, big){ const stops = r.stops.slice(), nm = shortR(r), err = G.removeTruck(r, big); if (err) say(err); else { track("減便 " + nm, stops); banner(`減便 ${nm}`, `維持費 <span class="big">−${(big ? UPKEEP_BIG : UPKEEP_WEEK).toLocaleString()}G/週</span>　／　車両は車庫へ（売却するか、他の路線の増車に使えます）`); } }
 function plusTruck(r, big){ const h0 = G.headway(r), err = G.addTruck(r, false, 0, big); if (err) return say(err); track((big ? "大型を追加 " : "増便 ") + shortR(r), r.stops);
