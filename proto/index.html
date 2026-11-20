@@ -45,6 +45,8 @@ aside{width:330px;border-left:1px solid var(--line);overflow:auto;padding:12px 1
 h2{font-size:13px;margin:0 0 6px;color:var(--muted);font-weight:700;letter-spacing:.06em}
 .route{border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin-bottom:6px;border-left-width:5px}
 .route .stops{font-weight:500}
+.route{cursor:pointer}
+.route.pin{outline:2px solid var(--accent);outline-offset:1px}
 .route .meta{display:flex;align-items:center;gap:6px;margin-top:4px;font-size:12px;color:var(--muted);flex-wrap:wrap}
 .route .meta button{padding:1px 8px}
 .route .meta .sp{margin-left:auto}
@@ -303,7 +305,7 @@ const $ = id => document.getElementById(id);
 const G = createGame(CITY_DATA);
 for (let i = 0; i < 240; i++) G.step(0.05);   // 開始時に荷物と車両が動いている状態にする
 const cv = $("cv"), ctx = cv.getContext("2d"), mapEl = $("map");
-let W = 0, H = 0, dpr = 1, view = { s: 1, x: 0, y: 0 }, speed = 1, building = null, hover = -1, sel = -1, col = {}, segUse = {}, pops = [], agg = {}, aggAt = 0, banners = [], bannerUntil = 0, stat = [], prevLv = {}, badSince = {}, dispMoney = G.money, hintOn = false, editing = null, addFront = false, prefMode = true, findMode = true, selFound = true, hold = 0, mode = "normal", changes = [];
+let W = 0, H = 0, dpr = 1, view = { s: 1, x: 0, y: 0 }, speed = 1, building = null, hover = -1, sel = -1, col = {}, segUse = {}, pops = [], agg = {}, aggAt = 0, banners = [], bannerUntil = 0, stat = [], prevLv = {}, badSince = {}, dispMoney = G.money, hintOn = false, editing = null, addFront = false, prefMode = true, findMode = true, selFound = true, hold = 0, mode = "normal", changes = [], hoverMap = null, hoverCard = null, pinR = null;
 const paths = {}; for (const id in GEO) { const p = new Path2D(); for (const r of GEO[id]) { p.moveTo(r[0] / 5, r[1] / 5); for (let k = 2; k < r.length; k += 2) p.lineTo(r[k] / 5, r[k + 1] / 5); p.closePath(); } paths[id] = p; }
 const regOf = {}; G.cities.forEach(c => regOf[c.id] = c.reg);
 const fmtG = n => Math.round(n).toLocaleString("ja-JP") + "G";
@@ -318,6 +320,13 @@ function fit(all){ const cs = G.cities.filter(c => all || G.unlocked.has(c.reg))
 const sx = c => c.x * view.s + view.x, sy = c => c.y * view.s + view.y;
 function zoomAt(f, px, py){ const s = Math.max(0.6, Math.min(30, view.s * f)); f = s / view.s; view.x = px - (px - view.x) * f; view.y = py - (py - view.y) * f; view.s = s; }
 
+function hiSet(){ if (building) return null; if (pinR !== null && !G.routes.some(r => r.id === pinR)) pinR = null; const ids = new Set(), h = hoverMap ?? hoverCard;
+  if (h !== null) ids.add(h); else if (pinR !== null) ids.add(pinR); else if (sel >= 0 && selFound) for (const r of G.routes) if (r.stops.includes(sel)) ids.add(r.id);
+  return ids.size ? ids : null; }
+function routeAt(px, py){ let best = null, bd = 7;
+  for (const r of G.routes) for (const l of r.legs) for (let q = 0; q < l.pts.length - 1; q++) { const P = segPts(r.id, l.pts[q], l.pts[q + 1]), dx = P[2] - P[0], dy = P[3] - P[1], L = dx * dx + dy * dy || 1;
+    const u = Math.max(0, Math.min(1, ((px - P[0]) * dx + (py - P[1]) * dy) / L)), d = Math.hypot(px - P[0] - u * dx, py - P[1] - u * dy); if (d < bd) { bd = d; best = r; } }
+  return best; }
 function rebuildSegUse(){ segUse = {}; for (const r of G.routes) { const seen = new Set(); for (const l of r.legs) for (let q = 0; q < l.pts.length - 1; q++) { const a = Math.min(l.pts[q], l.pts[q + 1]), b = Math.max(l.pts[q], l.pts[q + 1]), k = a + "-" + b; if (seen.has(k)) continue; seen.add(k); (segUse[k] = segUse[k] || []).push(r.id); } } }
 function segPts(rid, i, j){ const a = Math.min(i, j), b = Math.max(i, j), u = segUse[a + "-" + b] || [rid], k = Math.max(0, u.indexOf(rid)), off = (k - (u.length - 1) / 2) * 5;
   const A = G.cities[a], B = G.cities[b], dx = sx(B) - sx(A), dy = sy(B) - sy(A), n = Math.hypot(dx, dy) || 1, ox = -dy / n * off, oy = dx / n * off;
@@ -340,8 +349,8 @@ function draw(){
     ctx.globalAlpha = on ? 0.9 : 0.3; ctx.setLineDash(e.sea ? [4, 5] : []); ctx.beginPath(); ctx.moveTo(sx(A), sy(A)); ctx.lineTo(sx(B), sy(B)); ctx.stroke(); }
   ctx.setLineDash([]); ctx.globalAlpha = 1;
   // 路線
-  ctx.lineWidth = 4; ctx.globalAlpha = mode === "jam" ? 0.2 : 1;
-  for (const r of G.routes) { ctx.strokeStyle = r.color; ctx.beginPath(); for (const l of r.legs) for (let q = 0; q < l.pts.length - 1; q++) { const P = segPts(r.id, l.pts[q], l.pts[q + 1]); ctx.moveTo(P[0], P[1]); ctx.lineTo(P[2], P[3]); } ctx.stroke(); }
+  const hi = hiSet(), base = mode === "jam" ? 0.2 : 1;   // 強調中は他の路線を薄くする
+  for (const r of hi ? G.routes.slice().sort((a, b) => hi.has(a.id) - hi.has(b.id)) : G.routes) { const on = !hi || hi.has(r.id); ctx.globalAlpha = on ? (hi ? 1 : base) : 0.12; ctx.lineWidth = hi && on ? 6 : 4; ctx.strokeStyle = r.color; ctx.beginPath(); for (const l of r.legs) for (let q = 0; q < l.pts.length - 1; q++) { const P = segPts(r.id, l.pts[q], l.pts[q + 1]); ctx.moveTo(P[0], P[1]); ctx.lineTo(P[2], P[3]); } ctx.stroke(); }
   ctx.globalAlpha = 1;
   // 作成中の路線
   if (building && building.length) { ctx.strokeStyle = col.accent; ctx.lineWidth = 3; ctx.setLineDash([6, 6]); ctx.beginPath();
@@ -365,7 +374,7 @@ function draw(){
     else { ctx.fillStyle = col.muted; ctx.globalAlpha = 0.6; ctx.fill(); ctx.globalAlpha = 1; }
     if (building && building.includes(c.i)) { ctx.beginPath(); ctx.arc(x, y, 9, 0, 6.3); ctx.strokeStyle = col.accent; ctx.lineWidth = 2.5; ctx.stroke(); } }
   // 車両
-  for (const r of G.routes) for (const tr of r.trucks) { const [x, y, a] = truckPos(tr); ctx.save(); ctx.translate(x, y); ctx.rotate(a);
+  for (const r of G.routes) for (const tr of r.trucks) { if (hi && !hi.has(r.id)) continue; const [x, y, a] = truckPos(tr); ctx.save(); ctx.translate(x, y); ctx.rotate(a);
     const w = tr.big ? 24 : 14, hh = tr.big ? 11 : 8;
     ctx.fillStyle = col.panel; ctx.fillRect(-w / 2 - 1, -hh / 2 - 1, w + 2, hh + 2); ctx.fillStyle = r.color; ctx.globalAlpha = 0.35; ctx.fillRect(-w / 2, -hh / 2, w, hh); ctx.globalAlpha = 1;
     ctx.fillRect(-w / 2, -hh / 2, w * tr.load.length / tr.cap, hh); ctx.strokeStyle = r.color; ctx.lineWidth = tr.big ? 2.2 : 1.5; ctx.strokeRect(-w / 2, -hh / 2, w, hh); ctx.restore(); }
@@ -465,7 +474,7 @@ let seenWeeks = 0;
 function names(stops){ return stops.map(i => nm(G.cities[i])).join(" → "); }
 function renderRouteList(){
   $("routes").innerHTML = (G.routes.map(r => { const pf = r.lastRev === null ? null : r.lastRev - r.lastCost, low = r.lf < 0.25;
-    return `<div class="route" style="border-left-color:${r.color}"><div class="stops">${names(r.stops)}</div>
+    return `<div class="route${pinR === r.id ? " pin" : ""}" data-rid="${r.id}" style="border-left-color:${r.color}"><div class="stops">${names(r.stops)}</div>
     <div class="meta"><span>小型 ${r.trucks.filter(x => !x.big).length}台</span><button type="button" data-a="minus" data-r="${r.id}" aria-label="小型を1台車庫に戻す">−</button><button type="button" data-a="plus" data-r="${r.id}" aria-label="小型を1台増やす">＋</button>
     <span>大型 ${r.trucks.filter(x => x.big).length}台</span><button type="button" data-a="minus" data-big="1" data-r="${r.id}" aria-label="大型を1台車庫に戻す">−</button><button type="button" data-a="plus" data-big="1" data-r="${r.id}" aria-label="大型を1台増やす">＋</button></div>
     <div class="meta"><span>約${G.headway(r).toFixed(1)}時間おき</span><button type="button" class="sp" data-a="edit" data-r="${r.id}">編集</button><button type="button" data-a="del" data-r="${r.id}">廃止</button></div>
@@ -514,9 +523,14 @@ cv.addEventListener("pointermove", e => { const r = cv.getBoundingClientRect(), 
   if (h >= 0) { const c = G.cities[h], cnt = {}; c.wait.forEach(s => cnt[s.d] = (cnt[s.d] || 0) + 1); const top = Object.entries(cnt).sort((a, b) => b[1] - a[1])[0];
     tip.innerHTML = `<b>${kenOf(c)}　${c.name}</b><br>特産：${c.prod}<br>待ち荷物：${c.wait.length}箱${top ? `（最多は${G.cities[top[0]].name}行き ${top[1]}箱）` : ""}<br>押すと詳しい状態を表示`;
     tip.style.display = "block"; tip.style.left = Math.min(px + 14, W - 250) + "px"; tip.style.top = (py + 16) + "px"; if (!drag) cv.style.cursor = building ? "pointer" : "grab"; }
-  else { tip.style.display = "none"; if (!drag) cv.style.cursor = "grab"; } });
-cv.addEventListener("pointerup", e => { const r = cv.getBoundingClientRect(); if (drag && !drag.moved) { const i = cityAt(e.clientX - r.left, e.clientY - r.top); if (i >= 0) clickCity(i); else if (!building && sel >= 0) { sel = -1; renderCity(); } } drag = null; cv.style.cursor = "grab"; });
-cv.addEventListener("pointerleave", () => { hover = -1; $("tip").style.display = "none"; });
+  else { const rr = drag || building ? null : routeAt(px, py); hoverMap = rr ? rr.id : null;
+    if (rr) { tip.innerHTML = `<b>${names(rr.stops)}</b><br>小型 ${rr.trucks.filter(x => !x.big).length}台・大型 ${rr.trucks.filter(x => x.big).length}台／約${G.headway(rr).toFixed(1)}時間おき<br>積載率 ${(rr.lf * 100).toFixed(0)}%<br>押すと強調を固定`; tip.style.display = "block"; tip.style.left = Math.min(px + 14, W - 250) + "px"; tip.style.top = (py + 16) + "px"; cv.style.cursor = "pointer"; }
+    else { tip.style.display = "none"; if (!drag) cv.style.cursor = "grab"; } }
+  if (h >= 0) hoverMap = null; });
+cv.addEventListener("pointerup", e => { const r = cv.getBoundingClientRect(); if (drag && !drag.moved) { const i = cityAt(e.clientX - r.left, e.clientY - r.top); const rr = i < 0 && !building ? routeAt(e.clientX - r.left, e.clientY - r.top) : null;
+    if (i >= 0) clickCity(i); else if (rr) { pinR = pinR === rr.id ? null : rr.id; renderRouteList(); const el = document.querySelector(`.route[data-rid="${rr.id}"]`); if (el && pinR !== null) el.scrollIntoView({ block: "nearest" }); }
+    else if (!building) { if (sel >= 0) { sel = -1; renderCity(); } if (pinR !== null) { pinR = null; renderRouteList(); } } } drag = null; cv.style.cursor = "grab"; });
+cv.addEventListener("pointerleave", () => { hover = -1; hoverMap = null; $("tip").style.display = "none"; });
 cv.addEventListener("wheel", e => { e.preventDefault(); const r = cv.getBoundingClientRect(); zoomAt(e.deltaY < 0 ? 1.15 : 1 / 1.15, e.clientX - r.left, e.clientY - r.top); }, { passive: false });
 $("z-in").onclick = () => zoomAt(1.4, W / 2, H / 2); $("z-out").onclick = () => zoomAt(1 / 1.4, W / 2, H / 2); $("z-fit").onclick = () => fit(false); $("z-all").onclick = () => fit(true);
 function setSpeed(v){ speed = v; for (const k of [0, 1, 3, 10]) $("sp" + k).classList.toggle("on", k === v); }
@@ -549,7 +563,9 @@ $("m-name").onclick = () => { prefMode = !prefMode; syncToggles(); renderRoutes(
 $("m-find").onclick = () => { findMode = !findMode; if (!findMode) selFound = true; syncToggles(); renderCity(); };
 syncToggles();
 $("health").addEventListener("click", e => { if (e.target.id === "hint-tg") { hintOn = !hintOn; renderHealth(); renderCity(); return; } const b = e.target.closest("[data-c]"); if (b) { sel = +b.dataset.c; selFound = !findMode; renderCity(); $("city-sec").scrollIntoView({ block: "nearest" }); } });
-$("routes").addEventListener("click", e => { const b = e.target.closest("button"); if (!b) return; const big = b.dataset.big === "1"; if (b.dataset.a === "sell") { const e2 = G.sellTruck(big); if (e2) say(e2); else { banner(`${big ? "大型" : "小型"}を1台売却`, `資金 <span class="big">+${(big ? TRUCK_PRICE_BIG / 2 : TRUCK_SELL).toLocaleString()}G</span>`); renderRouteList(); } return; }
+$("routes").addEventListener("mouseover", e => { const c = e.target.closest(".route"); hoverCard = c ? +c.dataset.rid : null; });
+$("routes").addEventListener("mouseleave", () => { hoverCard = null; });
+$("routes").addEventListener("click", e => { const b = e.target.closest("button"); if (!b) { const c = e.target.closest(".route"); if (c) { pinR = pinR === +c.dataset.rid ? null : +c.dataset.rid; renderRouteList(); } return; } const big = b.dataset.big === "1"; if (b.dataset.a === "sell") { const e2 = G.sellTruck(big); if (e2) say(e2); else { banner(`${big ? "大型" : "小型"}を1台売却`, `資金 <span class="big">+${(big ? TRUCK_PRICE_BIG / 2 : TRUCK_SELL).toLocaleString()}G</span>`); renderRouteList(); } return; }
   const r = G.routes.find(r => r.id === +b.dataset.r); if (!r) return;
   if (b.dataset.a === "plus") plusTruck(r, big); else if (b.dataset.a === "minus") minusTruck(r, big); else if (b.dataset.a === "edit") { editing = r; building = r.stops.slice(); addFront = false; renderHint(); mapEl.scrollIntoView({ block: "nearest" }); } else { const stops = r.stops.slice(), nm = shortR(r); G.removeRoute(r); track("廃止 " + nm, stops); } });
 $("regions").addEventListener("click", e => { const b = e.target.closest("button"); if (!b) return; const k = +b.dataset.reg, err = G.unlockRegion(k); if (err) say(err); else { fit(false); banner(`${REGIONS[k]}地方に進出！`, `新たに${G.cities.filter(c => c.reg === k).length}都道府県へ路線を引けます`); } });
