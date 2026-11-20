@@ -75,6 +75,7 @@ th{color:var(--muted);font-size:11px}
 .garage{display:flex;align-items:center;gap:8px;justify-content:space-between;border:1px dashed var(--line);border-radius:8px;padding:6px 10px;margin-bottom:6px;font-size:13px}
 .garage small{color:var(--muted);display:block}
 .fin{font-size:12px;margin:6px 0 0}
+.chip{padding:1px 8px;border-radius:99px;font-weight:500}
 .res{border-bottom:1px dashed var(--line);padding:4px 0;font-size:13px}
 .res small{color:var(--muted)}
 .modes{position:absolute;left:12px;bottom:12px;display:flex;flex-wrap:wrap;max-width:calc(100% - 24px);gap:4px;align-items:center;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:4px 6px;font-size:12px}
@@ -122,7 +123,7 @@ footer{font-size:11px;color:var(--muted)}
     <section><h2>週次レポート</h2><div id="weekly"></div></section>
     <section><h2>地方</h2><div id="regions"></div></section>
     <section><h2>到着ログ</h2><div id="log"></div></section>
-    <footer>数値はすべて仮設定です。新しい都道府県をつなぐと1県につき1,000G、特産品が納期どおりに初めて届くと1,000Gの祝い金が入ります。道路時間は直線距離からの概算。県境データ：国土地理院「地球地図日本」（jpn-atlas 経由）。この画面は保存されません。</footer>
+    <footer>数値はすべて仮設定です。路線の「編集」で停車都市を入れ替えられます（車両は始発に戻ります）。新しい都道府県をつなぐと1県につき1,000G、特産品が納期どおりに初めて届くと1,000Gの祝い金が入ります。道路時間は直線距離からの概算。県境データ：国土地理院「地球地図日本」（jpn-atlas 経由）。この画面は保存されません。</footer>
   </aside>
 </main>
 <script>
@@ -136,7 +137,7 @@ const $ = id => document.getElementById(id);
 const G = createGame(CITY_DATA);
 for (let i = 0; i < 240; i++) G.step(0.05);   // 開始時に荷物と車両が動いている状態にする
 const cv = $("cv"), ctx = cv.getContext("2d"), mapEl = $("map");
-let W = 0, H = 0, dpr = 1, view = { s: 1, x: 0, y: 0 }, speed = 1, building = null, hover = -1, sel = -1, col = {}, segUse = {}, pops = [], agg = {}, aggAt = 0, banners = [], bannerUntil = 0, stat = [], prevLv = {}, badSince = {}, dispMoney = G.money, hintOn = false, prefMode = true, findMode = true, selFound = true, hold = 0, mode = "normal", changes = [];
+let W = 0, H = 0, dpr = 1, view = { s: 1, x: 0, y: 0 }, speed = 1, building = null, hover = -1, sel = -1, col = {}, segUse = {}, pops = [], agg = {}, aggAt = 0, banners = [], bannerUntil = 0, stat = [], prevLv = {}, badSince = {}, dispMoney = G.money, hintOn = false, editing = null, addFront = false, prefMode = true, findMode = true, selFound = true, hold = 0, mode = "normal", changes = [];
 const paths = {}; for (const id in GEO) { const p = new Path2D(); for (const r of GEO[id]) { p.moveTo(r[0] / 5, r[1] / 5); for (let k = 2; k < r.length; k += 2) p.lineTo(r[k] / 5, r[k + 1] / 5); p.closePath(); } paths[id] = p; }
 const regOf = {}; G.cities.forEach(c => regOf[c.id] = c.reg);
 const fmtG = n => Math.round(n).toLocaleString("ja-JP") + "G";
@@ -199,8 +200,9 @@ function draw(){
     if (building && building.includes(c.i)) { ctx.beginPath(); ctx.arc(x, y, 9, 0, 6.3); ctx.strokeStyle = col.accent; ctx.lineWidth = 2.5; ctx.stroke(); } }
   // 車両
   for (const r of G.routes) for (const tr of r.trucks) { const [x, y, a] = truckPos(tr); ctx.save(); ctx.translate(x, y); ctx.rotate(a);
-    ctx.fillStyle = col.panel; ctx.fillRect(-8, -5, 16, 10); ctx.fillStyle = r.color; ctx.globalAlpha = 0.35; ctx.fillRect(-7, -4, 14, 8); ctx.globalAlpha = 1;
-    ctx.fillRect(-7, -4, 14 * tr.load.length / CAP, 8); ctx.strokeStyle = r.color; ctx.lineWidth = 1.5; ctx.strokeRect(-7, -4, 14, 8); ctx.restore(); }
+    const w = tr.big ? 24 : 14, hh = tr.big ? 11 : 8;
+    ctx.fillStyle = col.panel; ctx.fillRect(-w / 2 - 1, -hh / 2 - 1, w + 2, hh + 2); ctx.fillStyle = r.color; ctx.globalAlpha = 0.35; ctx.fillRect(-w / 2, -hh / 2, w, hh); ctx.globalAlpha = 1;
+    ctx.fillRect(-w / 2, -hh / 2, w * tr.load.length / tr.cap, hh); ctx.strokeStyle = r.color; ctx.lineWidth = tr.big ? 2.2 : 1.5; ctx.strokeRect(-w / 2, -hh / 2, w, hh); ctx.restore(); }
   // 地名（県名は常に優先して表示。重なる場合は拡大で表示）
   ctx.textBaseline = "middle";
   for (const c of order) { const x = sx(c), y = sy(c); if (x < -60 || y < -20 || x > W + 20 || y > H + 20) continue; const un = G.unlocked.has(c.reg);
@@ -227,7 +229,7 @@ function reason(c, st){
   if (st.level === 0) return "荷物は順調に流れています。";
   if (st.stranded > st.topCount) return `行き先まで路線がつながっていない荷物が${st.stranded}箱あります。`;
   const r = G.routes.find(r => r.id === st.topRoute); if (!r) return "少し前に納期切れが出ました。今は落ち着いています。";
-  if (st.topCount > CAP) return `「${shortR(r)}」を待つ荷物が${st.topCount}箱あります（1便で運べるのは${CAP}箱）。`;
+  const cp = Math.max(...r.trucks.map(x => x.cap)); if (st.topCount > cp) return `「${shortR(r)}」を待つ荷物が${st.topCount}箱あります（1便で運べるのは${cp}箱）。`;
   return `「${shortR(r)}」は約${G.headway(r).toFixed(1)}時間おき。待っている間に納期が過ぎた荷物があります。`; }
 function hintText(st){ return st.stranded > st.topCount ? "行き先の都市まで路線をつなぐと流れます。" : "この路線の車両を増やすと便の間隔が短くなります。混む区間だけを走る短い路線を足す方法もあります。"; }
 function eta(r, target){ let best = Infinity;
@@ -298,18 +300,21 @@ function names(stops){ return stops.map(i => nm(G.cities[i])).join(" → "); }
 function renderRouteList(){
   $("routes").innerHTML = (G.routes.map(r => { const pf = r.lastRev === null ? null : r.lastRev - r.lastCost, low = r.lf < 0.25;
     return `<div class="route" style="border-left-color:${r.color}"><div class="stops">${names(r.stops)}</div>
-    <div class="meta"><span>${r.trucks.length}台</span><button type="button" data-a="minus" data-r="${r.id}" aria-label="1台を車庫に戻す">−</button><button type="button" data-a="plus" data-r="${r.id}" aria-label="1台増やす">＋</button>
-    <span>約${G.headway(r).toFixed(1)}時間おき</span><button type="button" class="sp" data-a="del" data-r="${r.id}">廃止</button></div>
+    <div class="meta"><span>小型 ${r.trucks.filter(x => !x.big).length}台</span><button type="button" data-a="minus" data-r="${r.id}" aria-label="小型を1台車庫に戻す">−</button><button type="button" data-a="plus" data-r="${r.id}" aria-label="小型を1台増やす">＋</button>
+    <span>大型 ${r.trucks.filter(x => x.big).length}台</span><button type="button" data-a="minus" data-big="1" data-r="${r.id}" aria-label="大型を1台車庫に戻す">−</button><button type="button" data-a="plus" data-big="1" data-r="${r.id}" aria-label="大型を1台増やす">＋</button></div>
+    <div class="meta"><span>約${G.headway(r).toFixed(1)}時間おき</span><button type="button" class="sp" data-a="edit" data-r="${r.id}">編集</button><button type="button" data-a="del" data-r="${r.id}">廃止</button></div>
     <div class="meta"><span class="${low ? "warnc" : ""}">積載率 ${(r.lf * 100).toFixed(0)}%</span><span>${pf === null ? "収支は週末に集計" : `先週の収支 <b class="${pf < 0 ? "bad" : "ok"}">${pf >= 0 ? "+" : ""}${fmtG(pf)}</b>`}</span>${pf !== null && pf < 0 ? `<span class="pill late">赤字</span>` : low ? `<span class="pill warnc">空きが多い</span>` : ""}</div></div>`; }).join("") || "<p>路線がありません。</p>")
-    + `<div class="garage"><span>車庫 <b>${G.garage}台</b><small>（維持費なし。＋を押すと車庫の車両から使います）</small></span>${G.garage ? `<button type="button" data-a="sell">1台売却 +${TRUCK_SELL.toLocaleString()}G</button>` : ""}</div>`; }
+    + `<div class="garage"><span>車庫 <b>小型 ${G.garage}台・大型 ${G.garageBig}台</b><small>（維持費なし。＋を押すと車庫の車両から使います）</small></span><span>${G.garage ? `<button type="button" data-a="sell">小型を売却 +${TRUCK_SELL.toLocaleString()}G</button>` : ""}${G.garageBig ? ` <button type="button" data-a="sell" data-big="1">大型を売却 +${(TRUCK_PRICE_BIG / 2).toLocaleString()}G</button>` : ""}</span></div>
+    <p class="fin">小型：${CAP}箱・${TRUCK_PRICE.toLocaleString()}G・維持費 週${UPKEEP_WEEK.toLocaleString()}G ／ 大型：${CAP_BIG}箱・${TRUCK_PRICE_BIG.toLocaleString()}G・維持費 週${UPKEEP_BIG.toLocaleString()}G</p>`; }
 function renderRoutes(){ rebuildSegUse(); renderRouteList(); renderRegions(); renderHint(); refreshStatus(); renderHealth(); renderCity(); }
 function renderRegions(){ const sv = G.served();
   $("regions").innerHTML = REGIONS.map((n, k) => { const cs = G.cities.filter(c => c.reg === k), m = cs.filter(c => sv.has(c.i)).length, un = G.unlocked.has(k), adj = G.regionAdjacent(k);
     return `<div class="reg"><span class="nm">${n} <small>${cs.length}都道府県</small></span>${un ? `<span class="pill ${m === cs.length ? "ok" : "wk"}">接続 ${m}/${cs.length}</span>` : adj ? `<button type="button" data-reg="${k}">進出 ${REGION_PRICE.toLocaleString()}G</button>` : `<small>隣の地方から</small>`}</div>`; }).join("") + (G.unlocked.size < REGIONS.length ? (() => { const ot = G.onTime(), okq = ot === null || ot >= GATE;
     return `<p class="fin">進出の条件：資金 ${REGION_PRICE.toLocaleString()}G ／ 納期遵守率 ${GATE * 100}%以上 <span class="pill ${okq ? "ok" : "late"}">現在 ${ot === null ? "—" : Math.floor(ot * 100) + "%"}</span></p>`; })() : ""); }
 function renderHint(){ const h = $("hint");
-  if (building) { h.innerHTML = `<b>路線を作成中</b>：都市を順にクリック（2〜${MAX_STOPS}都市）。途中の都市は通過します。<br>${building.length ? names(building) + "　／　見込み需要 +約" + r10(G.forecast(building)) + "箱/週" : "最初の都市を選んでください"}
-    <div class="acts"><button id="b-ok" class="primary" type="button" ${building.length < 2 ? "disabled" : ""}>開通する（${G.garage ? "車庫の車両を使用" : "車両1台 " + TRUCK_PRICE.toLocaleString() + "G"}）</button><button id="b-undo" type="button" ${building.length ? "" : "disabled"}>1つ戻す</button><button id="b-cancel" type="button">やめる</button></div>`; return; }
+  if (building) { const chips = building.map((i, k) => `<button type="button" class="chip" data-rm="${k}" aria-label="${nm(G.cities[i])}を外す">${nm(G.cities[i])} ×</button>`).join(" → ");
+    h.innerHTML = `<b>${editing ? "路線を編集中" : "路線を作成中"}</b>：地図の都市を押すと${addFront ? "先頭" : "末尾"}に追加、下の都市名を押すと外します（2〜${MAX_STOPS}都市。途中の都市は通過）。<br>${building.length ? chips + "　／　見込み需要 +約" + r10(G.forecast(building)) + "箱/週" : "最初の都市を選んでください"}
+    <div class="acts"><button id="b-ok" class="primary" type="button" ${building.length < 2 ? "disabled" : ""}>${editing ? "変更を確定（車両はそのまま）" : "開通する（" + (G.garage ? "車庫の車両を使用" : "車両1台 " + TRUCK_PRICE.toLocaleString() + "G") + "）"}</button><button id="b-front" type="button">追加位置：${addFront ? "先頭" : "末尾"}</button><button id="b-undo" type="button" ${building.length ? "" : "disabled"}>1つ戻す</button><button id="b-cancel" type="button">やめる</button></div>`; return; }
   const sv = G.served(), miss = G.cities.filter(c => G.unlocked.has(c.reg) && !sv.has(c.i));
   if (miss.length) h.innerHTML = `<b>未接続：${miss.slice(0, 6).map(c => c.pref).join("・")}${miss.length > 6 ? " ほか" : ""}</b><br>橙色の輪の都市です。「路線を作る」でつなぐと、荷物が流れ始めます。`;
   else if (G.unlocked.size < REGIONS.length) h.innerHTML = `<b>営業圏の全都道府県がつながりました。</b><br>` + ((G.onTime() ?? 1) < GATE ? `次の地方へ進出するには、納期遵守率を${GATE * 100}%以上にする必要があります（現在 ${Math.floor(G.onTime() * 100)}%）。` : G.money >= REGION_PRICE ? "右の「地方」から、隣の地方へ進出できます。" : `次の地方への進出には ${REGION_PRICE.toLocaleString()}G 必要です。利益の出ていない路線は、右の「路線」で積載率と収支を確認できます。`);
@@ -333,8 +338,8 @@ function clickCity(i){ if (!building) { if (i === sel && !selFound) pops.push({ 
   if (!G.unlocked.has(c.reg)) return say(REGIONS[c.reg] + "地方はまだ進出していません");
   if (building.includes(i)) return say("同じ都市は1回だけ選べます");
   if (building.length >= MAX_STOPS) return say("1路線は" + MAX_STOPS + "都市までです");
-  if (building.length && !G.roadPath(building[building.length - 1], i)) return say("道路がつながっていません");
-  building.push(i); renderHint(); }
+  if (building.length && !G.roadPath(building[addFront ? 0 : building.length - 1], i)) return say("道路がつながっていません");
+  addFront ? building.unshift(i) : building.push(i); renderHint(); }
 let drag = null;
 cv.addEventListener("pointerdown", e => { drag = { x: e.clientX, y: e.clientY, vx: view.x, vy: view.y, moved: false }; cv.setPointerCapture(e.pointerId); });
 cv.addEventListener("pointermove", e => { const r = cv.getBoundingClientRect(), px = e.clientX - r.left, py = e.clientY - r.top;
@@ -350,16 +355,24 @@ cv.addEventListener("wheel", e => { e.preventDefault(); const r = cv.getBounding
 $("z-in").onclick = () => zoomAt(1.4, W / 2, H / 2); $("z-out").onclick = () => zoomAt(1 / 1.4, W / 2, H / 2); $("z-fit").onclick = () => fit(false); $("z-all").onclick = () => fit(true);
 function setSpeed(v){ speed = v; for (const k of [0, 1, 3, 10]) $("sp" + k).classList.toggle("on", k === v); }
 for (const k of [0, 1, 3, 10]) $("sp" + k).onclick = () => setSpeed(k);
-$("new-route").onclick = () => { building = []; renderHint(); };
+$("new-route").onclick = () => { building = []; editing = null; addFront = false; renderHint(); };
 $("hint").addEventListener("click", e => { const id = e.target.id;
-  if (id === "b-cancel") { building = null; renderHint(); }
+  const rm = e.target.closest("[data-rm]"); if (rm) { building.splice(+rm.dataset.rm, 1); renderHint(); return; }
+  if (id === "b-front") { addFront = !addFront; renderHint(); return; }
+  if (id === "b-undo") { addFront ? building.shift() : building.pop(); renderHint(); return; }
+  if (id === "b-ok" && editing) { const before = G.served(), r0 = G.rate, old = editing.stops.slice(), err = G.editRoute(editing, building);
+    if (err) say(err); else { const dq = (G.rate - r0) * 168, lost = [...before].filter(i => !G.served().has(i)).map(i => G.cities[i].pref); track("変更 " + shortR(editing), old.concat(building));
+      banner(`路線を変更：${names(building)}`, `配送需要 ${dq >= 0 ? "+" : ""}約${r10(dq)}箱/週${G.lastBonus ? `　／　開通祝い金 <span class="big">+${G.lastBonus.toLocaleString()}G</span>` : ""}${lost.length ? `　／　未接続になった県：${lost.join("・")}` : ""}`); editing = null; building = null; }
+    renderHint(); return; }
+  if (id === "b-cancel") { building = null; editing = null; renderHint(); }
   else if (id === "b-undo") { building.pop(); renderHint(); }
   else if (id === "b-ok") { const before = G.served(), r0 = G.rate, err = G.addRoute(building);
     if (err) say(err); else { const added = building.filter(i => !before.has(i)).map(i => G.cities[i].pref), dq = (G.rate - r0) * 168; track("開通 " + shortR(G.routes[G.routes.length - 1]), building); building = null;
       banner(added.length ? `路線開通！ ${added.join("・")}がつながりました` : "新しい路線が開通！", `つながった都道府県 ${before.size} → <span class="big">${G.served().size}</span>　／　配送需要 ${dq >= 0 ? "+" : ""}約${r10(dq)}箱/週${G.lastBonus ? `　／　開通祝い金 <span class="big">+${G.lastBonus.toLocaleString()}G</span>` : ""}`); }
     renderHint(); } });
-function minusTruck(r){ const stops = r.stops.slice(), nm = shortR(r), err = G.removeTruck(r); if (err) say(err); else { track("減便 " + nm, stops); banner(`減便 ${nm}`, `維持費 <span class="big">−${UPKEEP_WEEK.toLocaleString()}G/週</span>　／　車両は車庫へ（売却するか、他の路線の増車に使えます）`); } }
-function plusTruck(r){ const h0 = G.headway(r), err = G.addTruck(r); if (err) say(err); else track("増便 " + shortR(r), r.stops); if (!err) banner(`増便！ ${shortR(r)}`, `約${h0.toFixed(1)}時間おき → <span class="big">約${G.headway(r).toFixed(1)}時間おき</span>`); }
+function minusTruck(r, big){ const stops = r.stops.slice(), nm = shortR(r), err = G.removeTruck(r, big); if (err) say(err); else { track("減便 " + nm, stops); banner(`減便 ${nm}`, `維持費 <span class="big">−${(big ? UPKEEP_BIG : UPKEEP_WEEK).toLocaleString()}G/週</span>　／　車両は車庫へ（売却するか、他の路線の増車に使えます）`); } }
+function plusTruck(r, big){ const h0 = G.headway(r), err = G.addTruck(r, false, 0, big); if (err) return say(err); track((big ? "大型を追加 " : "増便 ") + shortR(r), r.stops);
+  banner(`${big ? "大型トラックを追加" : "増便"}！ ${shortR(r)}`, `約${h0.toFixed(1)}時間おき → <span class="big">約${G.headway(r).toFixed(1)}時間おき</span>${big ? `　／　1便で${CAP_BIG}箱` : ""}`); }
 $("city").addEventListener("click", e => { const b = e.target.closest("button"); if (!b) return;
   if (b.dataset.a === "reveal") { selFound = true; renderCity(); } else if (b.dataset.a === "start") { building = [sel]; renderHint(); } else { const r = G.routes.find(r => r.id === +b.dataset.r); if (r) (b.dataset.a === "minus" ? minusTruck(r) : plusTruck(r)); } });
 const asideEl = document.querySelector("aside"); asideEl.addEventListener("pointerdown", () => { hold = 1; }); window.addEventListener("pointerup", () => setTimeout(() => { hold = 0; }, 80));
@@ -370,9 +383,9 @@ $("m-name").onclick = () => { prefMode = !prefMode; syncToggles(); renderRoutes(
 $("m-find").onclick = () => { findMode = !findMode; if (!findMode) selFound = true; syncToggles(); renderCity(); };
 syncToggles();
 $("health").addEventListener("click", e => { if (e.target.id === "hint-tg") { hintOn = !hintOn; renderHealth(); renderCity(); return; } const b = e.target.closest("[data-c]"); if (b) { sel = +b.dataset.c; selFound = !findMode; renderCity(); $("city-sec").scrollIntoView({ block: "nearest" }); } });
-$("routes").addEventListener("click", e => { const b = e.target.closest("button"); if (!b) return; if (b.dataset.a === "sell") { const e2 = G.sellTruck(); if (e2) say(e2); else { banner("車両を1台売却", `資金 <span class="big">+${TRUCK_SELL.toLocaleString()}G</span>`); renderRouteList(); } return; }
+$("routes").addEventListener("click", e => { const b = e.target.closest("button"); if (!b) return; const big = b.dataset.big === "1"; if (b.dataset.a === "sell") { const e2 = G.sellTruck(big); if (e2) say(e2); else { banner(`${big ? "大型" : "小型"}を1台売却`, `資金 <span class="big">+${(big ? TRUCK_PRICE_BIG / 2 : TRUCK_SELL).toLocaleString()}G</span>`); renderRouteList(); } return; }
   const r = G.routes.find(r => r.id === +b.dataset.r); if (!r) return;
-  if (b.dataset.a === "plus") plusTruck(r); else if (b.dataset.a === "minus") minusTruck(r); else { const stops = r.stops.slice(), nm = shortR(r); G.removeRoute(r); track("廃止 " + nm, stops); } });
+  if (b.dataset.a === "plus") plusTruck(r, big); else if (b.dataset.a === "minus") minusTruck(r, big); else if (b.dataset.a === "edit") { editing = r; building = r.stops.slice(); addFront = false; renderHint(); mapEl.scrollIntoView({ block: "nearest" }); } else { const stops = r.stops.slice(), nm = shortR(r); G.removeRoute(r); track("廃止 " + nm, stops); } });
 $("regions").addEventListener("click", e => { const b = e.target.closest("button"); if (!b) return; const k = +b.dataset.reg, err = G.unlockRegion(k); if (err) say(err); else { fit(false); banner(`${REGIONS[k]}地方に進出！`, `新たに${G.cities.filter(c => c.reg === k).length}都道府県へ路線を引けます`); } });
 document.addEventListener("keydown", e => { if (e.code === "Space" && e.target.tagName !== "BUTTON") { e.preventDefault(); setSpeed(speed ? 0 : 1); } });
 

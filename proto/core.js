@@ -1,5 +1,5 @@
 // ===== ニッポン物流網 プロトタイプ: シミュレーション本体（画面に依存しない） =====
-const CAP = 10, STOP_H = 0.5, GRACE = 6, MAX_STOPS = 6;
+const CAP = 10, CAP_BIG = 20, TRUCK_PRICE_BIG = 9000, UPKEEP_BIG = 3500, STOP_H = 0.5, GRACE = 6, MAX_STOPS = 6;
 const TRUCK_PRICE = 4000, UPKEEP_WEEK = 2000, REGION_PRICE = 10000, START_MONEY = 20000, TRUCK_SELL = 2000, FIRST_BONUS = 1000, OPEN_BONUS = 1000, GATE = 0.9, GOAL = 0.95, GOAL_WEEKS = 4;
 const FEE_BASE = 10, FEE_PER_H = 4, DEMAND_K = 0.025;
 const REGIONS = ["北海道", "東北", "関東", "中部", "近畿", "中国", "四国", "九州・沖縄"];
@@ -16,7 +16,7 @@ function createGame(CITY_DATA, rng) {
     // 道路時間(仮): 直線距離×1.3÷時速75km。海をまたぐ区間は個別指定
     return { a, b, h: h ? +h : Math.max(0.5, Math.round(hav(cities[a], cities[b]) * 1.3 / 75 * 4) / 4), sea: !!sea }; });
   const G = { t: 0, money: START_MONEY, cities, edges, routes: [], unlocked: new Set([2]), dist: [], nxt: [], table: {}, pairs: [], cum: [], rate: 0,
-    judged: [], lf: 0.5, week: { n: 0, ok: 0, rev: 0, upkeep: 0, bonus: 0 }, garage: 0, lastBonus: 0, streak: 0, completed: null, records: { profit: null, trucks: null }, weekNo: 1, reports: [], log: [], nextRouteId: 1, sweepAt: 0, fx: [], firsts: new Set(), totalDelivered: 0, onChange: null };
+    judged: [], lf: 0.5, week: { n: 0, ok: 0, rev: 0, upkeep: 0, bonus: 0 }, garage: 0, garageBig: 0, lastBonus: 0, streak: 0, completed: null, records: { profit: null, trucks: null }, weekNo: 1, reports: [], log: [], nextRouteId: 1, sweepAt: 0, fx: [], firsts: new Set(), totalDelivered: 0, onChange: null };
   const N = cities.length;
 
   function rebuildRoads() {
@@ -66,14 +66,28 @@ function createGame(CITY_DATA, rng) {
     routeGeom(r); G.routes.push(r); addTruck(r, free, 0);
     G.lastBonus = free ? 0 : stops.filter(c => !before.has(c)).length * OPEN_BONUS; G.money += G.lastBonus; G.week.bonus += G.lastBonus; return null;
   }
-  function addTruck(r, free, delay) {
-    if (!free) { if (G.garage > 0) G.garage--; else { if (G.money < TRUCK_PRICE) return "資金が足りません（1台 " + TRUCK_PRICE.toLocaleString() + "G）"; G.money -= TRUCK_PRICE; } }
-    r.trucks.push({ route: r, idx: 0, to: 0, dir: 1, load: [], state: "dwell", start: G.t, until: G.t + STOP_H + (delay || 0) }); replan(); return null;
+  // 車両: 小型(10箱)と大型(20箱)。大型は高価だが1便で多く運べる
+  const upkeepOf = r => r.trucks.reduce((a, t) => a + (t.big ? UPKEEP_BIG : UPKEEP_WEEK), 0);
+  function addTruck(r, free, delay, big) {
+    const price = big ? TRUCK_PRICE_BIG : TRUCK_PRICE, gk = big ? "garageBig" : "garage";
+    if (!free) { if (G[gk] > 0) G[gk]--; else { if (G.money < price) return "資金が足りません（" + (big ? "大型" : "小型") + "1台 " + price.toLocaleString() + "G）"; G.money -= price; } }
+    r.trucks.push({ route: r, idx: 0, to: 0, dir: 1, load: [], state: "dwell", start: G.t, until: G.t + STOP_H + (delay || 0), big: !!big, cap: big ? CAP_BIG : CAP }); replan(); return null;
   }
   function dropLoad(tr) { const c = cities[tr.route.stops[tr.state === "move" ? tr.to : tr.idx]]; for (const s of tr.load) c.wait.push(s); tr.load = []; }
-  function removeTruck(r) { if (r.trucks.length <= 1) return "最後の1台は減らせません（路線ごと廃止できます）"; dropLoad(r.trucks.pop()); G.garage++; replan(); return null; }
-  function sellTruck() { if (G.garage < 1) return "車庫に車両がありません"; G.garage--; G.money += TRUCK_SELL; return null; }
-  function removeRoute(r) { r.trucks.forEach(dropLoad); G.garage += r.trucks.length; G.routes = G.routes.filter(x => x !== r); replan(); }
+  function removeTruck(r, big) {
+    if (r.trucks.length <= 1) return "最後の1台は減らせません（路線ごと廃止できます）";
+    let k = -1; r.trucks.forEach((t, q) => { if (t.big === !!big) k = q; }); if (k < 0) return "この路線に" + (big ? "大型" : "小型") + "の車両はありません";
+    dropLoad(r.trucks[k]); r.trucks.splice(k, 1); G[big ? "garageBig" : "garage"]++; replan(); return null; }
+  function sellTruck(big) { const gk = big ? "garageBig" : "garage"; if (G[gk] < 1) return "車庫に車両がありません"; G[gk]--; G.money += big ? TRUCK_PRICE_BIG / 2 : TRUCK_SELL; return null; }
+  function removeRoute(r) { r.trucks.forEach(tr => { dropLoad(tr); G[tr.big ? "garageBig" : "garage"]++; }); G.routes = G.routes.filter(x => x !== r); replan(); }
+  // 路線の編集: 停車都市を入れ替える。車両はそのまま（積み荷は降ろし、始発に戻る）
+  function editRoute(r, stops) {
+    if (stops.length < 2 || stops.length > MAX_STOPS) return "路線は2〜6都市で作ります";
+    for (let k = 0; k < stops.length - 1; k++) if (!roadPath(stops[k], stops[k + 1])) return "道路がつながっていない都市があります";
+    const before = served(); r.trucks.forEach(dropLoad); r.stops = stops.slice(); routeGeom(r);
+    r.trucks.forEach((tr, k) => { tr.idx = 0; tr.to = 0; tr.dir = 1; tr.state = "dwell"; tr.start = G.t; tr.until = G.t + STOP_H + k * r.cycle / r.trucks.length; });
+    G.lastBonus = stops.filter(c => !before.has(c)).length * OPEN_BONUS; G.money += G.lastBonus; G.week.bonus += G.lastBonus; replan(); return null;
+  }
   function regionAdjacent(reg) { return edges.some(e => { const ra = cities[e.a].reg, rb = cities[e.b].reg; return (ra === reg && G.unlocked.has(rb)) || (rb === reg && G.unlocked.has(ra)); }); }
   function unlockRegion(reg) {
     if (G.unlocked.has(reg)) return null; if (!regionAdjacent(reg)) return "隣の地方を先に解放してください";
@@ -98,13 +112,13 @@ function createGame(CITY_DATA, rng) {
     if (i === r.stops.length - 1) tr.dir = -1; else if (i === 0) tr.dir = 1;
     const cand = [], rest = [];
     for (const s of city.wait) { const l = s.path && s.path[0]; (l && l.r === r.id && l.a === i && (l.b - i) * tr.dir > 0 ? cand : rest).push(s); }
-    if (cand.length > CAP - keep.length) cand.sort((a, b) => ((a.due < when) - (b.due < when)) || a.due - b.due);
-    const room = CAP - keep.length; tr.load = keep.concat(cand.slice(0, room)); city.wait = rest.concat(cand.slice(room));
+    if (cand.length > tr.cap - keep.length) cand.sort((a, b) => ((a.due < when) - (b.due < when)) || a.due - b.due);
+    const room = tr.cap - keep.length; tr.load = keep.concat(cand.slice(0, room)); city.wait = rest.concat(cand.slice(room));
   }
   function stepTruck(tr) {
     while (tr.until <= G.t) { const r = tr.route;
       if (tr.state === "dwell") { tr.to = tr.idx + tr.dir; tr.leg = r.legs[Math.min(tr.idx, tr.to)]; tr.state = "move"; tr.start = tr.until; tr.until += tr.leg.h;
-        G.lf = G.lf * 0.98 + (tr.load.length / CAP) * 0.02; r.lf = r.lf * 0.94 + (tr.load.length / CAP) * 0.06; }
+        G.lf = G.lf * 0.98 + (tr.load.length / tr.cap) * 0.02; r.lf = r.lf * 0.94 + (tr.load.length / tr.cap) * 0.06; }
       else { tr.idx = tr.to; arrive(tr, tr.until); tr.state = "dwell"; tr.start = tr.until; tr.until += STOP_H; } }
   }
   function poisson(l) { const L = Math.exp(-l); let k = 0, p = 1; do { k++; p *= rng(); } while (p > L); return k - 1; }
@@ -114,7 +128,7 @@ function createGame(CITY_DATA, rng) {
       while (lo < hi) { const m = (lo + hi) >> 1; if (G.cum[m] < x) lo = m + 1; else hi = m; } const [o, d] = G.pairs[lo];
       cities[o].wait.push({ o, d, born: G.t, due: G.t + 8 + 4 * G.dist[o][d], path: planFrom(o, d) }); } }
     for (const r of G.routes) for (const tr of r.trucks) stepTruck(tr);
-    const up = G.routes.reduce((s, r) => s + r.trucks.length, 0) * UPKEEP_WEEK / 168 * dt; G.money -= up; G.week.upkeep += up; for (const r of G.routes) r.wkCost += r.trucks.length * UPKEEP_WEEK / 168 * dt;
+    let up = 0; for (const r of G.routes) { const c = upkeepOf(r) / 168 * dt; r.wkCost += c; up += c; } G.money -= up; G.week.upkeep += up;
     if (G.t >= G.sweepAt) { G.sweepAt = G.t + 0.5;
       for (const c of cities) if (c.wait.length) c.wait = c.wait.filter(s => { if (G.t > s.due + GRACE) { judge(false, s, false); c.cancels.push(G.t); return false; } return true; });
       for (const c of cities) while (c.cancels.length && c.cancels[0] < G.t - 24) c.cancels.shift();
@@ -148,6 +162,6 @@ function createGame(CITY_DATA, rng) {
   // 開始時の路線（関東の一部だけ接続済み。水戸・宇都宮は未接続）
   addRoute(["神奈川", "東京", "埼玉", "群馬"].map(p => byPref[p]), true); addTruck(G.routes[0], true, G.routes[0].cycle / 2);
   addRoute(["千葉", "東京"].map(p => byPref[p]), true);
-  return Object.assign(G, { step, addRoute, addTruck, removeTruck, removeRoute, unlockRegion, regionAdjacent, roadPath, headway, onTime, served, truckCount, byPref, cityStatus, forecast, sellTruck });
+  return Object.assign(G, { step, addRoute, addTruck, removeTruck, removeRoute, unlockRegion, regionAdjacent, roadPath, headway, onTime, served, truckCount, byPref, cityStatus, forecast, sellTruck, editRoute, upkeepOf });
 }
-if (typeof module !== "undefined") module.exports = { createGame, REGIONS, GATE, GOAL, GOAL_WEEKS, TRUCK_SELL, FIRST_BONUS, OPEN_BONUS, TRUCK_PRICE, REGION_PRICE, CAP, UPKEEP_WEEK, MAX_STOPS };
+if (typeof module !== "undefined") module.exports = { createGame, REGIONS, CAP_BIG, TRUCK_PRICE_BIG, UPKEEP_BIG, GATE, GOAL, GOAL_WEEKS, TRUCK_SELL, FIRST_BONUS, OPEN_BONUS, TRUCK_PRICE, REGION_PRICE, CAP, UPKEEP_WEEK, MAX_STOPS };
