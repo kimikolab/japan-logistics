@@ -67,6 +67,10 @@ h2{font-size:13px;margin:0 0 6px;color:var(--muted);font-weight:700;letter-spaci
 .card h3{margin:0 0 2px;font-size:15px}
 .card p{margin:4px 0}
 .card ul{margin:4px 0;padding-left:18px}
+.card li{margin-bottom:6px}
+.tk{display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px;margin-top:3px;font-size:12px}
+.tk button{padding:1px 9px}
+.tk span{color:var(--muted)}
 .hrow{display:flex;gap:8px;align-items:baseline;padding:4px 0;border-bottom:1px dashed var(--line);cursor:pointer;width:100%;text-align:left;border-radius:0;border-width:0 0 1px 0;border-style:dashed}
 .hrow small{color:var(--muted)}
 .next{background:color-mix(in srgb,var(--accent) 12%,transparent);border-radius:8px;padding:6px 10px;margin-bottom:6px}
@@ -328,7 +332,9 @@ function renderCity(){ const sec = $("city-sec"); if (sel < 0) { sec.hidden = tr
   else { const st = stat[c.i] || G.cityStatus(c), cnt = {}; c.wait.forEach(s => cnt[s.d] = (cnt[s.d] || 0) + 1); const top = Object.entries(cnt).sort((a, b) => b[1] - a[1]).slice(0, 3);
     h += `<p><span class="pill ${st.level === 2 ? "late" : st.level === 1 ? "warnc" : "ok"}">${["順調", "混雑", "遅延"][st.level]}</span> ${reason(c, st)}${hintOn && st.level ? "<br><small>ヒント：" + hintText(st) + "</small>" : ""}</p>`;
     h += `<div style="font-size:12px;color:var(--muted)">待ち荷物 ${st.n}箱${st.overdue ? `（うち納期切れ ${st.overdue}箱）` : ""}${top.length ? "：" + top.map(([d, n]) => `${G.cities[d].name}行き${n}`).join("、") : ""}</div><ul>`;
-    for (const r of G.routes) if (r.stops.includes(c.i)) h += `<li><span style="color:${r.color}">■</span> ${shortR(r)}：${r.trucks.length}台・約${G.headway(r).toFixed(1)}時間おき・次の便 ${eta(r, r.stops.indexOf(c.i))}<br><button type="button" data-a="minus" data-r="${r.id}">−1台</button> <button type="button" data-a="plus" data-r="${r.id}">＋1台</button></li>`;
+    for (const r of G.routes) if (r.stops.includes(c.i)) h += `<li><span style="color:${r.color}">■</span> ${shortR(r)}：約${G.headway(r).toFixed(1)}時間おき・次の便 ${eta(r, r.stops.indexOf(c.i))}
+      <div class="tk"><span>小型 ${r.trucks.filter(x => !x.big).length}台</span><button type="button" data-a="minus" data-r="${r.id}" aria-label="小型を1台車庫に戻す">−</button><button type="button" data-a="plus" data-r="${r.id}" aria-label="小型を1台増やす">＋</button>
+      <span>大型 ${r.trucks.filter(x => x.big).length}台</span><button type="button" data-a="minus" data-big="1" data-r="${r.id}" aria-label="大型を1台車庫に戻す">−</button><button type="button" data-a="plus" data-big="1" data-r="${r.id}" aria-label="大型を1台増やす">＋</button></div></li>`;
     h += "</ul>"; }
   $("city").innerHTML = h; }
 function renderWeekly(){ const R = G.reports, a = R[R.length - 1], b = R[R.length - 2];
@@ -445,7 +451,7 @@ function minusTruck(r, big){ const stops = r.stops.slice(), nm = shortR(r), err 
 function plusTruck(r, big){ const h0 = G.headway(r), err = G.addTruck(r, false, 0, big); if (err) return say(err); track((big ? "大型を追加 " : "増便 ") + shortR(r), r.stops);
   banner(`${big ? "大型トラックを追加" : "増便"}！ ${shortR(r)}`, `約${h0.toFixed(1)}時間おき → <span class="big">約${G.headway(r).toFixed(1)}時間おき</span>${big ? `　／　1便で${CAP_BIG}箱` : ""}`); }
 $("city").addEventListener("click", e => { const b = e.target.closest("button"); if (!b) return;
-  if (b.dataset.a === "reveal") { selFound = true; renderCity(); } else if (b.dataset.a === "start") { building = [sel]; renderHint(); } else { const r = G.routes.find(r => r.id === +b.dataset.r); if (r) (b.dataset.a === "minus" ? minusTruck(r) : plusTruck(r)); } });
+  if (b.dataset.a === "reveal") { selFound = true; renderCity(); } else if (b.dataset.a === "start") { building = [sel]; renderHint(); } else { const r = G.routes.find(r => r.id === +b.dataset.r); if (r) (b.dataset.a === "minus" ? minusTruck(r, b.dataset.big === "1") : plusTruck(r, b.dataset.big === "1")); } });
 const asideEl = document.querySelector("aside"); asideEl.addEventListener("pointerdown", () => { hold = 1; }); window.addEventListener("pointerup", () => setTimeout(() => { hold = 0; }, 80));
 function setMode(m){ mode = m; $("m-normal").classList.toggle("on", m === "normal"); $("m-jam").classList.toggle("on", m === "jam"); }
 $("m-normal").onclick = () => setMode("normal"); $("m-jam").onclick = () => setMode("jam");
