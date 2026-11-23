@@ -124,6 +124,14 @@
 | `data/build.mjs` | 県境データの生成スクリプト（`jpn-atlas` が必要） |
 | `sim/` | 企画検証に使ったPythonシミュレーター（検証A・B・C） |
 
+## 公開
+
+`main` にプッシュすると、GitHub Actions（`.github/workflows/pages.yml`）が動作確認と組み立てを行い、GitHub Pages に公開する。
+
+公開先：https://kimikolab.github.io/japan-logistics/
+
+初回だけ、リポジトリの Settings → Pages で公開元（Source）を「GitHub Actions」にする必要がある。
+
 ## ビルド
 
 ```
