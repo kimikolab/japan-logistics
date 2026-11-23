@@ -9,7 +9,7 @@
 <style>
 /* 配置: 上に指標の帯、左に地図（主役）、右に路線・地方・到着ログの操作盤 */
 :root{
-  --sea:#dfe7ea; --land:#f6f3ea; --land-locked:#e6e4dc; --border:#b9b4a4; --ink:#1f2a30; --muted:#66727a;
+  --sea:#dfe7ea; --land:#f6f3ea; --land-locked:#d6d4cb; --border:#b9b4a4; --ink:#1f2a30; --muted:#66727a;
   --panel:#fbfaf6; --line:#d9d5c8; --accent:#1f7a8c; --good:#2e7d4f; --warn:#c77700; --bad:#c0392b; --road:#a9a595; --box:#b98a56;
   --font:"Zen Kaku Gothic New","Hiragino Sans","Yu Gothic UI","Meiryo",sans-serif;
 }
@@ -95,6 +95,7 @@ footer{font-size:11px;color:var(--muted)}
 <header>
   <h1>ニッポン物流網</h1>
   <div class="stat"><span>日時</span><b id="s-time">1日目 00:00</b></div>
+  <div class="stat"><span>季節</span><b id="s-season">春</b></div>
   <div class="stat"><span>資金</span><b id="s-money">0G</b></div>
   <div class="stat"><span>納期遵守率（直近3日）</span><b id="s-ot">—</b></div>
   <div class="stat"><span>積載率</span><b id="s-lf">—</b></div>
@@ -137,13 +138,17 @@ footer{font-size:11px;color:var(--muted)}
 const CAP = 10, CAP_BIG = 20, TRUCK_PRICE_BIG = 9000, UPKEEP_BIG = 3500, STOP_H = 0.5, GRACE = 6, MAX_STOPS = 6;
 const TRUCK_PRICE = 4000, UPKEEP_WEEK = 2000, REGION_PRICE = 10000, START_MONEY = 20000, TRUCK_SELL = 2000, FIRST_BONUS = 1000, OPEN_BONUS = 1000, GATE = 0.9, GOAL = 0.95, GOAL_WEEKS = 4, GROW_RATE = 0.9, GROW_MIN = 5, GROW_WEEKS = [2, 6];   // 地域の発展: 安定した週が2週で定着、6週で発展
 const FEE_BASE = 10, FEE_PER_H = 4, DEMAND_K = 0.025;
+// 四季: 1季節=14日。旬の特産品は出荷が増え、季節外れは減る（旬の割り当ては仮置き）
+const SEASONS = ["春", "夏", "秋", "冬"], SEASON_DAYS = 14, SEASON_H = SEASON_DAYS * 24, PEAK_FACTOR = 1.6, OFF_FACTOR = 0.8, SOON_H = 72;
+const PEAKS = { 北海道: [2], 青森: [2], 岩手: [0], 秋田: [2], 山形: [1], 福島: [1], 栃木: [3, 0], 群馬: [2], 埼玉: [3], 千葉: [2], 新潟: [2], 富山: [0], 山梨: [2], 長野: [1], 静岡: [0],
+  兵庫: [3], 奈良: [2], 和歌山: [3], 鳥取: [2], 島根: [1], 広島: [3], 山口: [3], 徳島: [1], 高知: [0, 2], 佐賀: [3], 熊本: [3, 0], 大分: [2], 宮崎: [1], 鹿児島: [2], 沖縄: [1] };
 const REGIONS = ["北海道", "東北", "関東", "中部", "近畿", "中国", "四国", "九州・沖縄"];
 const ROUTE_COLORS = ["#d1495b", "#1f7a8c", "#e09f3e", "#5b5f97", "#3a7d44", "#b5179e", "#8d6e63", "#0077b6", "#bc6c25", "#6a4c93"];
 const EDGE_SRC = "北海道-青森:8:sea,青森-岩手,青森-秋田,岩手-秋田,岩手-宮城,秋田-山形,宮城-山形,宮城-福島,山形-福島,山形-新潟,福島-栃木,福島-新潟,福島-茨城,栃木-埼玉,栃木-茨城,栃木-群馬,茨城-千葉,茨城-東京,埼玉-東京,埼玉-群馬,東京-千葉,東京-神奈川,東京-山梨,神奈川-静岡,群馬-長野,群馬-新潟,新潟-長野,新潟-富山,長野-山梨,長野-富山,長野-愛知,山梨-静岡,静岡-愛知,富山-石川,石川-福井,富山-岐阜,岐阜-愛知,福井-滋賀,愛知-三重,岐阜-滋賀,三重-滋賀,三重-奈良,滋賀-京都,京都-大阪,京都-奈良,奈良-大阪,大阪-和歌山,大阪-兵庫,兵庫-岡山,兵庫-鳥取,岡山-鳥取,鳥取-島根,岡山-広島,島根-広島,広島-山口,島根-山口,岡山-香川,兵庫-徳島,徳島-香川,香川-愛媛,香川-高知,徳島-高知,愛媛-高知,広島-愛媛:2.75,山口-福岡,福岡-佐賀,佐賀-長崎,福岡-大分,福岡-熊本,大分-宮崎,熊本-鹿児島,熊本-宮崎,宮崎-鹿児島,熊本-大分,鹿児島-沖縄:24:sea";
 
 function createGame(CITY_DATA, rng, saved) {
   rng = rng || Math.random;
-  const cities = CITY_DATA.map((c, i) => ({ ...c, i, wait: [], cancels: [], goodWeeks: 0, wkN: 0, wkOk: 0 }));
+  const cities = CITY_DATA.map((c, i) => ({ ...c, i, wait: [], cancels: [], goodWeeks: 0, wkN: 0, wkOk: 0, peak: PEAKS[c.pref] || [] }));
   const byPref = {}; cities.forEach(c => byPref[c.pref] = c.i);
   const hav = (a, b) => { const R = 6371, r = Math.PI / 180, dl = (b.lat - a.lat) * r, dn = (b.lon - a.lon) * r;
     const h = Math.sin(dl / 2) ** 2 + Math.cos(a.lat * r) * Math.cos(b.lat * r) * Math.sin(dn / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(h)); };
@@ -151,7 +156,7 @@ function createGame(CITY_DATA, rng, saved) {
     // 道路時間(仮): 直線距離×1.3÷時速75km。海をまたぐ区間は個別指定
     return { a, b, h: h ? +h : Math.max(0.5, Math.round(hav(cities[a], cities[b]) * 1.3 / 75 * 4) / 4), sea: !!sea }; });
   const G = { t: 0, money: START_MONEY, cities, edges, routes: [], unlocked: new Set([2]), dist: [], nxt: [], table: {}, pairs: [], cum: [], rate: 0,
-    judged: [], lf: 0.5, week: { n: 0, ok: 0, rev: 0, upkeep: 0, bonus: 0 }, garage: 0, garageBig: 0, lastBonus: 0, streak: 0, completed: null, records: { profit: null, trucks: null }, weekNo: 1, reports: [], log: [], nextRouteId: 1, sweepAt: 0, fx: [], firsts: new Set(), totalDelivered: 0, onChange: null };
+    judged: [], lf: 0.5, week: { n: 0, ok: 0, rev: 0, upkeep: 0, bonus: 0 }, garage: 0, garageBig: 0, lastBonus: 0, seasonNo: 0, soonFor: -1, streak: 0, completed: null, records: { profit: null, trucks: null }, weekNo: 1, reports: [], log: [], nextRouteId: 1, sweepAt: 0, fx: [], firsts: new Set(), totalDelivered: 0, onChange: null };
   const N = cities.length;
 
   function rebuildRoads() {
@@ -184,12 +189,16 @@ function createGame(CITY_DATA, rng, saved) {
             acc += r.legs[Math.min(j, j - dir)].h + (Math.abs(j - i) > 1 ? STOP_H : 0); const v = r.stops[j];
             if (!best[v] || base + acc < best[v].c - 1e-9) best[v] = { c: base + acc, p: bp.concat([{ r: r.id, a: i, b: j }]) }; } } } }
       table[o] = {}; for (const d in best) if (d !== o) table[o][d] = best[d].p; }
-    G.table = table; G.pairs = []; G.cum = []; let s = 0;
-    for (const o in table) for (const d in table[o]) { s += cities[o].mass * cities[d].mass / (1 + G.dist[o][d]); G.pairs.push([+o, +d]); G.cum.push(s); }
-    G.rate = s * DEMAND_K;
+    G.table = table; buildPairs();
     for (const c of cities) for (const sh of c.wait) sh.path = planFrom(c.i, sh.d);
     if (G.onChange) G.onChange();
   }
+  // 季節による出荷量の倍率（出荷元の県の旬で決まる）
+  const season = () => G.seasonNo % 4;
+  const seasonFactor = (c, sn) => !c.peak.length ? 1 : c.peak.includes(sn === undefined ? season() : sn) ? PEAK_FACTOR : OFF_FACTOR;
+  function buildPairs() { G.pairs = []; G.cum = []; let s = 0; const table = G.table;
+    for (const o in table) { const f = seasonFactor(cities[o]); for (const d in table[o]) { s += cities[o].mass * cities[d].mass / (1 + G.dist[o][d]) * f; G.pairs.push([+o, +d]); G.cum.push(s); } }
+    G.rate = s * DEMAND_K; }
   const planFrom = (o, d) => { const p = G.table[o] && G.table[o][d]; return p ? p.slice() : null; };
 
   function addRoute(stops, free) {
@@ -260,6 +269,9 @@ function createGame(CITY_DATA, rng, saved) {
   function poisson(l) { const L = Math.exp(-l); let k = 0, p = 1; do { k++; p *= rng(); } while (p > L); return k - 1; }
   function step(dt) {
     G.t += dt;
+    { const sn = Math.floor(G.t / SEASON_H);
+      if (sn !== G.seasonNo) { G.seasonNo = sn; buildPairs(); G.fx.push({ type: "season", s: sn % 4 }); G.log.push({ t: G.t, kind: "s", s: sn % 4 }); }
+      else if (G.soonFor !== sn && G.t >= (sn + 1) * SEASON_H - SOON_H) { G.soonFor = sn; G.fx.push({ type: "seasonSoon", s: (sn + 1) % 4 }); } }
     if (G.rate > 0) { for (let n = poisson(G.rate * dt); n > 0; n--) { const x = rng() * G.cum[G.cum.length - 1]; let lo = 0, hi = G.cum.length - 1;
       while (lo < hi) { const m = (lo + hi) >> 1; if (G.cum[m] < x) lo = m + 1; else hi = m; } const [o, d] = G.pairs[lo];
       cities[o].wait.push({ o, d, born: G.t, due: G.t + 8 + 4 * G.dist[o][d], path: planFrom(o, d) }); } }
@@ -313,7 +325,7 @@ function createGame(CITY_DATA, rng, saved) {
   function restore(d) {
     if (!d || d.v !== SAVE_VERSION || !Array.isArray(d.routes) || d.cities.length !== N) throw new Error("保存データの形式が合いません");
     for (const k of ["t", "money", "judged", "lf", "week", "garage", "garageBig", "streak", "completed", "records", "weekNo", "reports", "log", "nextRouteId", "sweepAt", "totalDelivered"]) G[k] = d[k];
-    G.unlocked = new Set(d.unlocked); G.firsts = new Set(d.firsts); rebuildRoads();
+    G.unlocked = new Set(d.unlocked); G.firsts = new Set(d.firsts); G.seasonNo = Math.floor(G.t / SEASON_H); G.soonFor = G.t >= (G.seasonNo + 1) * SEASON_H - SOON_H ? G.seasonNo : -1; rebuildRoads();
     d.cities.forEach((c, i) => { cities[i].wait = c.w; cities[i].cancels = c.x; cities[i].goodWeeks = c.g || 0; cities[i].wkN = c.n || 0; cities[i].wkOk = c.k || 0; });
     G.routes = d.routes.map(x => { const r = { id: x.id, stops: x.stops, color: x.color, trucks: [], lf: x.lf, wkRev: x.wkRev, wkCost: x.wkCost, lastRev: x.lastRev, lastCost: x.lastCost }; routeGeom(r);
       r.trucks = x.trucks.map(q => ({ route: r, idx: q.idx, to: q.to, dir: q.dir, state: q.state, start: q.start, until: q.until, big: !!q.big, cap: q.big ? CAP_BIG : CAP, load: q.load, leg: q.state === "move" ? r.legs[Math.min(q.idx, q.to)] : undefined })); return r; });
@@ -326,7 +338,7 @@ function createGame(CITY_DATA, rng, saved) {
     addRoute(["神奈川", "東京", "埼玉", "群馬"].map(p => byPref[p]), true); addTruck(G.routes[0], true, G.routes[0].cycle / 2);
     addRoute(["千葉", "東京"].map(p => byPref[p]), true);
   }
-  return Object.assign(G, { step, addRoute, addTruck, removeTruck, removeRoute, unlockRegion, regionAdjacent, roadPath, headway, onTime, served, truckCount, byPref, cityStatus, forecast, sellTruck, editRoute, upkeepOf, serialize, stageOf, developed });
+  return Object.assign(G, { step, addRoute, addTruck, removeTruck, removeRoute, unlockRegion, regionAdjacent, roadPath, headway, onTime, served, truckCount, byPref, cityStatus, forecast, sellTruck, editRoute, upkeepOf, serialize, stageOf, developed, season, seasonFactor });
 }
 
 const CITY_DATA = [{"id":"01","pref":"北海道","name":"札幌","lat":43.06,"lon":141.35,"reg":0,"mass":4,"prod":"じゃがいも","x":495.1,"y":92.2},{"id":"02","pref":"青森","name":"青森","lat":40.82,"lon":140.74,"reg":1,"mass":1.2,"prod":"りんご","x":483.5,"y":158.9},{"id":"03","pref":"岩手","name":"盛岡","lat":39.7,"lon":141.15,"reg":1,"mass":1.2,"prod":"わかめ","x":493.7,"y":191.9},{"id":"04","pref":"宮城","name":"仙台","lat":38.27,"lon":140.87,"reg":1,"mass":3,"prod":"笹かまぼこ","x":488.4,"y":234.4},{"id":"05","pref":"秋田","name":"秋田","lat":39.72,"lon":140.1,"reg":1,"mass":1.1,"prod":"米","x":469.7,"y":191.8},{"id":"06","pref":"山形","name":"山形","lat":38.24,"lon":140.36,"reg":1,"mass":1.1,"prod":"さくらんぼ","x":476.5,"y":235.6},{"id":"07","pref":"福島","name":"福島","lat":37.75,"lon":140.47,"reg":1,"mass":1.3,"prod":"もも","x":479.4,"y":250.1},{"id":"08","pref":"茨城","name":"水戸","lat":36.34,"lon":140.45,"reg":2,"mass":1.5,"prod":"納豆","x":479.8,"y":291.9},{"id":"09","pref":"栃木","name":"宇都宮","lat":36.57,"lon":139.88,"reg":2,"mass":1.5,"prod":"いちご","x":466.1,"y":285.3},{"id":"10","pref":"群馬","name":"前橋","lat":36.39,"lon":139.06,"reg":2,"mass":1.5,"prod":"こんにゃく","x":446.5,"y":290.8},{"id":"11","pref":"埼玉","name":"さいたま","lat":35.86,"lon":139.65,"reg":2,"mass":4,"prod":"ねぎ","x":460.8,"y":306.4},{"id":"12","pref":"千葉","name":"千葉","lat":35.6,"lon":140.12,"reg":2,"mass":3.5,"prod":"落花生","x":472.2,"y":314},{"id":"13","pref":"東京","name":"東京","lat":35.69,"lon":139.69,"reg":2,"mass":10,"prod":"書籍","x":461.8,"y":311.5},{"id":"14","pref":"神奈川","name":"横浜","lat":35.45,"lon":139.64,"reg":2,"mass":6,"prod":"しゅうまい","x":460.7,"y":318.6},{"id":"15","pref":"新潟","name":"新潟","lat":37.9,"lon":139.02,"reg":3,"mass":2,"prod":"米","x":445.3,"y":246.1},{"id":"16","pref":"富山","name":"富山","lat":36.7,"lon":137.21,"reg":3,"mass":1.2,"prod":"ほたるいか","x":402.5,"y":281.5},{"id":"17","pref":"石川","name":"金沢","lat":36.59,"lon":136.63,"reg":3,"mass":1.5,"prod":"金箔","x":388.6,"y":284.5},{"id":"18","pref":"福井","name":"福井","lat":36.07,"lon":136.22,"reg":3,"mass":1,"prod":"めがね","x":378.5,"y":299.7},{"id":"19","pref":"山梨","name":"甲府","lat":35.66,"lon":138.57,"reg":3,"mass":1,"prod":"ぶどう","x":434.9,"y":312.5},{"id":"20","pref":"長野","name":"長野","lat":36.65,"lon":138.18,"reg":3,"mass":1.5,"prod":"レタス","x":425.6,"y":283.2},{"id":"21","pref":"岐阜","name":"岐阜","lat":35.39,"lon":136.72,"reg":3,"mass":1.5,"prod":"刃物","x":390.1,"y":320.2},{"id":"22","pref":"静岡","name":"静岡","lat":34.98,"lon":138.38,"reg":3,"mass":2.5,"prod":"お茶","x":430.3,"y":332.7},{"id":"23","pref":"愛知","name":"名古屋","lat":35.18,"lon":136.91,"reg":3,"mass":5,"prod":"自動車部品","x":394.6,"y":326.5},{"id":"24","pref":"三重","name":"津","lat":34.73,"lon":136.51,"reg":4,"mass":1.3,"prod":"真珠","x":384.6,"y":339.6},{"id":"25","pref":"滋賀","name":"大津","lat":35,"lon":135.87,"reg":4,"mass":1.2,"prod":"近江牛","x":369.3,"y":331.3},{"id":"26","pref":"京都","name":"京都","lat":35.02,"lon":135.76,"reg":4,"mass":3,"prod":"八つ橋","x":366.6,"y":330.6},{"id":"27","pref":"大阪","name":"大阪","lat":34.69,"lon":135.52,"reg":4,"mass":7,"prod":"医薬品","x":360.5,"y":340.2},{"id":"28","pref":"兵庫","name":"神戸","lat":34.69,"lon":135.18,"reg":4,"mass":3.5,"prod":"日本酒","x":352.2,"y":340},{"id":"29","pref":"奈良","name":"奈良","lat":34.69,"lon":135.83,"reg":4,"mass":1.2,"prod":"柿","x":368,"y":340.4},{"id":"30","pref":"和歌山","name":"和歌山","lat":34.23,"lon":135.17,"reg":4,"mass":1,"prod":"みかん","x":351.5,"y":353.6},{"id":"31","pref":"鳥取","name":"鳥取","lat":35.5,"lon":134.24,"reg":5,"mass":0.8,"prod":"梨","x":330.3,"y":315.1},{"id":"32","pref":"島根","name":"松江","lat":35.47,"lon":133.05,"reg":5,"mass":0.8,"prod":"しじみ","x":301.6,"y":314.5},{"id":"33","pref":"岡山","name":"岡山","lat":34.66,"lon":133.93,"reg":5,"mass":2,"prod":"デニム","x":321.7,"y":339.6},{"id":"34","pref":"広島","name":"広島","lat":34.4,"lon":132.46,"reg":5,"mass":3,"prod":"かき","x":285.4,"y":345.4},{"id":"35","pref":"山口","name":"山口","lat":34.19,"lon":131.47,"reg":5,"mass":1.1,"prod":"ふぐ","x":260.8,"y":350},{"id":"36","pref":"徳島","name":"徳島","lat":34.07,"lon":134.56,"reg":6,"mass":0.9,"prod":"すだち","x":336.4,"y":357.8},{"id":"37","pref":"香川","name":"高松","lat":34.34,"lon":134.04,"reg":6,"mass":1.1,"prod":"うどん","x":323.9,"y":349.2},{"id":"38","pref":"愛媛","name":"松山","lat":33.84,"lon":132.77,"reg":6,"mass":1.3,"prod":"タオル","x":292.1,"y":362.5},{"id":"39","pref":"高知","name":"高知","lat":33.56,"lon":133.53,"reg":6,"mass":0.9,"prod":"かつお","x":310.3,"y":371.8},{"id":"40","pref":"福岡","name":"福岡","lat":33.61,"lon":130.42,"reg":7,"mass":4,"prod":"明太子","x":233.8,"y":365.3},{"id":"41","pref":"佐賀","name":"佐賀","lat":33.25,"lon":130.3,"reg":7,"mass":0.9,"prod":"のり","x":230,"y":375.7},{"id":"42","pref":"長崎","name":"長崎","lat":32.74,"lon":129.87,"reg":7,"mass":1.2,"prod":"カステラ","x":218.1,"y":389.9},{"id":"43","pref":"熊本","name":"熊本","lat":32.79,"lon":130.74,"reg":7,"mass":2,"prod":"トマト","x":239.8,"y":390.2},{"id":"44","pref":"大分","name":"大分","lat":33.24,"lon":131.61,"reg":7,"mass":1.1,"prod":"しいたけ","x":262.3,"y":378.4},{"id":"45","pref":"宮崎","name":"宮崎","lat":31.91,"lon":131.42,"reg":7,"mass":1.1,"prod":"マンゴー","x":255,"y":417.5},{"id":"46","pref":"鹿児島","name":"鹿児島","lat":31.56,"lon":130.56,"reg":7,"mass":1.5,"prod":"さつまいも","x":232.6,"y":426.3},{"id":"47","pref":"沖縄","name":"那覇","lat":26.21,"lon":127.68,"reg":7,"mass":1.4,"prod":"パイナップル","x":144.9,"y":577.6}];
@@ -351,7 +363,12 @@ const label = c => c.pref === c.name ? c.pref : c.pref + " " + c.name;
 if (saveData && saveData.ui) { prefMode = !!saveData.ui.prefMode; findMode = !!saveData.ui.findMode; hintOn = !!saveData.ui.hintOn; }
 function save(){ if (resetting) return; try { localStorage.setItem(SAVE_KEY, JSON.stringify({ game: G.serialize(), ui: { prefMode, findMode, hintOn } })); saveOk = true; savedAt = Date.now(); } catch (e) { saveOk = false; }
   $("save-st").textContent = saveOk ? "自動保存：" + new Date(savedAt).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "保存できません（このブラウザでは保存が使えません）"; }
-function readColors(){ const cs = getComputedStyle(document.documentElement); for (const k of ["sea","land","land-locked","border","ink","muted","panel","accent","good","warn","bad","road","box"]) col[k] = cs.getPropertyValue("--" + k).trim(); }
+// 季節ごとの陸地の色（明・暗）。冬は雪の多い県を白くする
+const LAND = { light: ["#eef2dc", "#dfeccb", "#f4e5cc", "#e9e2cd"], dark: ["#2c382f", "#27392c", "#3b332a", "#2b3237"] }, SNOW = { light: "#ffffff", dark: "#5c6772" };
+const SNOWY = new Set(["01", "02", "03", "05", "06", "07", "15", "16", "17", "18", "20", "31"]);
+let isDark = false;
+const landOf = id => { const th = isDark ? "dark" : "light", sn = G.season(); return sn === 3 && SNOWY.has(id) ? SNOW[th] : LAND[th][sn]; };
+function readColors(){ const cs = getComputedStyle(document.documentElement); for (const k of ["sea","land","land-locked","border","ink","muted","panel","accent","good","warn","bad","road","box"]) col[k] = cs.getPropertyValue("--" + k).trim(); isDark = parseInt(col.panel.slice(1, 3), 16) < 128; }
 function resize(){ const r = mapEl.getBoundingClientRect(); dpr = window.devicePixelRatio || 1; W = r.width; H = r.height; cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
 function fit(all){ const cs = G.cities.filter(c => all || G.unlocked.has(c.reg)); let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
   for (const c of cs) { x0 = Math.min(x0, c.x); y0 = Math.min(y0, c.y); x1 = Math.max(x1, c.x); y1 = Math.max(y1, c.y); }
@@ -360,6 +377,19 @@ function fit(all){ const cs = G.cities.filter(c => all || G.unlocked.has(c.reg))
 const sx = c => c.x * view.s + view.x, sy = c => c.y * view.s + view.y;
 function zoomAt(f, px, py){ const s = Math.max(0.6, Math.min(30, view.s * f)); f = s / view.s; view.x = px - (px - view.x) * f; view.y = py - (py - view.y) * f; view.s = s; }
 
+// 発展段階の建物: 1=小屋 2=倉庫 3=工場（煙突つき）。図形だけで描く
+function drawBuilding(x, y, stage, c){ const k = Math.max(0.75, Math.min(1.7, view.s / 3.2)), bx = x - 13 * k, by = y + 22 * k; ctx.save(); ctx.translate(bx, by); ctx.scale(k, k);
+  ctx.lineWidth = 1.2; ctx.strokeStyle = col.ink; ctx.lineJoin = "round"; const wall = col.panel, roof = col.box;
+  if (stage === 1) { ctx.fillStyle = wall; ctx.fillRect(-5, -6, 10, 6); ctx.strokeRect(-5, -6, 10, 6); ctx.fillStyle = roof; ctx.beginPath(); ctx.moveTo(-7, -6); ctx.lineTo(0, -11); ctx.lineTo(7, -6); ctx.closePath(); ctx.fill(); ctx.stroke(); }
+  else if (stage === 2) { ctx.fillStyle = wall; ctx.fillRect(-9, -8, 18, 8); ctx.strokeRect(-9, -8, 18, 8); ctx.fillStyle = roof; ctx.beginPath(); ctx.moveTo(-10, -8); ctx.quadraticCurveTo(0, -15, 10, -8); ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.fillStyle = col.ink; ctx.fillRect(-2.5, -5, 5, 5); }
+  else { ctx.fillStyle = wall; ctx.fillRect(4, -17, 4, 9); ctx.strokeRect(4, -17, 4, 9); ctx.fillRect(-11, -8, 22, 8); ctx.strokeRect(-11, -8, 22, 8);
+    ctx.fillStyle = roof; ctx.beginPath(); ctx.moveTo(-11, -8); ctx.lineTo(-11, -13); ctx.lineTo(-5, -8); ctx.lineTo(-5, -13); ctx.lineTo(1, -8); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = col.ink; ctx.fillRect(-8, -5, 3, 3); ctx.fillRect(-2, -5, 3, 3); ctx.fillRect(4, -5, 3, 3);
+    const ph = reduceMotion || !speed ? 0.4 : (performance.now() / 1400 + c.i * 0.37) % 1; ctx.fillStyle = col.muted;   // 煙
+    for (let q = 0; q < 2; q++) { const f = (ph + q * 0.5) % 1; ctx.globalAlpha = 0.55 * (1 - f); ctx.beginPath(); ctx.arc(6 + f * 4, -19 - f * 9, 1.8 + f * 2, 0, 6.3); ctx.fill(); } ctx.globalAlpha = 1; }
+  if (c.peak.includes(G.season())) { ctx.font = "700 9px " + FONT; ctx.textBaseline = "middle"; ctx.textAlign = "center"; ctx.fillStyle = col.warn; ctx.beginPath(); ctx.arc(-14, -4, 6, 0, 6.3); ctx.fill(); ctx.fillStyle = col.panel; ctx.fillText("旬", -14, -3.5); ctx.textAlign = "left"; }
+  ctx.restore(); }
+const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 function hiSet(){ if (building) return null; if (pinR !== null && !G.routes.some(r => r.id === pinR)) pinR = null; const ids = new Set(), h = hoverMap ?? hoverCard;
   if (h !== null) ids.add(h); else if (pinR !== null) ids.add(pinR); else if (sel >= 0 && selFound) for (const r of G.routes) if (r.stops.includes(sel)) ids.add(r.id);
   return ids.size ? ids : null; }
@@ -381,7 +411,7 @@ function truckPos(tr){ const r = tr.route;
 function draw(){
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.fillStyle = col.sea; ctx.fillRect(0, 0, W, H);
   ctx.setTransform(dpr * view.s, 0, 0, dpr * view.s, dpr * view.x, dpr * view.y); ctx.lineWidth = 0.9 / view.s; ctx.strokeStyle = col.border; ctx.lineJoin = "round";
-  for (const id in paths) { ctx.fillStyle = G.unlocked.has(regOf[id]) ? col.land : col["land-locked"]; ctx.fill(paths[id]); ctx.stroke(paths[id]); }
+  for (const id in paths) { ctx.fillStyle = G.unlocked.has(regOf[id]) ? landOf(id) : col["land-locked"]; ctx.fill(paths[id]); ctx.stroke(paths[id]); }
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.lineCap = "round";
   // 道路
   ctx.strokeStyle = col.road; ctx.lineWidth = 1.2;
@@ -408,7 +438,7 @@ function draw(){
     if (lv) { const tx = lv === 2 ? "遅延" : "混雑"; ctx.font = "700 11px " + FONT; const w = ctx.measureText(tx).width + 10; ctx.fillStyle = lc; ctx.beginPath(); ctx.roundRect(x + 8, y - 22, w, 16, 8); ctx.fill(); ctx.fillStyle = col.panel; ctx.textBaseline = "middle"; ctx.fillText(tx, x + 13, y - 13.5); }
     if (c.i === sel && selFound) { ctx.beginPath(); ctx.arc(x, y, 11, 0, 6.3); ctx.strokeStyle = col.accent; ctx.lineWidth = 2; ctx.stroke(); }
     if (!sv && un && view.s > 1.6) { ctx.font = "500 11px " + FONT; ctx.fillStyle = col.warn; ctx.textBaseline = "middle"; ctx.fillText("見込み 約" + r10(G.forecast([c.i])) + "箱/週", x + 10, y + 1); }
-    if (sv && c.goodWeeks >= GROW_WEEKS[0]) { ctx.font = "700 14px " + FONT; ctx.textBaseline = "middle"; ctx.textAlign = "center"; const sx_ = "★".repeat(c.goodWeeks >= GROW_WEEKS[1] ? 2 : 1); ctx.lineWidth = 3; ctx.strokeStyle = col.land; ctx.strokeText(sx_, x - 3, y + 15); ctx.fillStyle = col.box; ctx.fillText(sx_, x - 3, y + 15); ctx.textAlign = "left"; }
+    if (sv) drawBuilding(x, y, c.goodWeeks >= GROW_WEEKS[1] ? 3 : c.goodWeeks >= GROW_WEEKS[0] ? 2 : 1, c);
     ctx.beginPath(); ctx.arc(x, y, sv ? 5 : un ? 5 : 2.5, 0, 6.3);
     if (sv) { ctx.fillStyle = lc; ctx.fill(); ctx.strokeStyle = col.panel; ctx.lineWidth = 1.5; ctx.stroke(); }
     else if (un) { ctx.fillStyle = col.panel; ctx.fill(); ctx.strokeStyle = col.warn; ctx.lineWidth = 2.5; ctx.stroke(); }
@@ -426,7 +456,7 @@ function draw(){
     const hit = b => rects.some(r => b[0] < r[0] + r[2] && b[0] + b[2] > r[0] && b[1] < r[1] + r[3] && b[1] + b[3] > r[1]); let bx, ty, box, placed = false;
     for (const [px, py] of [[x - w - 9, y], [x - w / 2, y - 17], [x - w - 5, y - 14], [x - w - 5, y + 15]]) { box = [px - 2, py - 9, w + 4, 18]; if (!hit(box)) { bx = px; ty = py; placed = true; break; } }
     if (!placed) { if (c.i !== hover) continue; bx = x - w - 9; ty = y; box = [bx - 2, ty - 9, w + 4, 18]; } rects.push(box);
-    ctx.lineWidth = 3; ctx.strokeStyle = un ? col.land : col["land-locked"]; ctx.globalAlpha = un ? 1 : 0.75; ctx.strokeText(t, bx, ty); ctx.fillStyle = un ? col.ink : col.muted; ctx.fillText(t, bx, ty); ctx.globalAlpha = 1; }
+    ctx.lineWidth = 3; ctx.strokeStyle = un ? landOf(c.id) : col["land-locked"]; ctx.globalAlpha = un ? 1 : 0.75; ctx.strokeText(t, bx, ty); ctx.fillStyle = un ? col.ink : col.muted; ctx.fillText(t, bx, ty); ctx.globalAlpha = 1; }
   // 成果のポップアップ（+収入など）
   const now = performance.now(); pops = pops.filter(p => now - p.born < p.dur);
   for (const p of mode === "jam" || view.s < 1.6 ? [] : pops) { const c = G.cities[p.c], f = (now - p.born) / p.dur, x = sx(c), y = sy(c) - 24 - 26 * f; ctx.globalAlpha = f < 0.7 ? 1 : (1 - f) / 0.3; ctx.font = "700 " + (p.big ? 15 : 13) + "px " + FONT; ctx.textAlign = "center";
@@ -495,7 +525,7 @@ function renderHealth(){ const sv = G.served(), prob = G.cities.filter(c => stat
   $("health").innerHTML = (hintOn ? `<div class="next"><small>ヒント：次の一手</small><br><b>${next}</b></div>` : "") + (prob.length ? prob.slice(0, 5).map(c => `<button type="button" class="hrow" data-c="${c.i}"><span class="pill ${stat[c.i].level === 2 ? "late" : "warnc"}">${stat[c.i].level === 2 ? "遅延" : "混雑"}</span><span>${prefMode ? kenOf(c) : c.name}<small>（${REGIONS[c.reg]}）</small></span><small>待ち ${stat[c.i].n}箱</small></button>`).join("") : "") +
     `<p style="margin:6px 0 0;font-size:12px;color:var(--muted)">順調 ${sv.size - prob.length}都市 ／ 混雑 ${warn}都市 ／ 遅延 ${bad}都市</p>${fin}<button type="button" id="hint-tg" style="margin-top:6px">${hintOn ? "ヒントを隠す" : "ヒントを見る"}</button>`; }
 function renderCity(){ const sec = $("city-sec"); if (sel < 0) { sec.hidden = true; return; } sec.hidden = false; const c = G.cities[sel], sv = G.served().has(c.i), un = G.unlocked.has(c.reg);
-  let h = `<h3>${kenOf(c)}　${c.name}</h3><div style="font-size:12px;color:var(--muted)">${REGIONS[c.reg]}地方・特産：${c.prod}</div>`;
+  let h = `<h3>${kenOf(c)}　${c.name}</h3><div style="font-size:12px;color:var(--muted)">${REGIONS[c.reg]}地方・特産：${c.prod}${c.peak.length ? `（旬：${c.peak.map(q => SEASONS[q]).join("・")}${c.peak.includes(G.season()) ? `。いま旬で出荷 ${PEAK_FACTOR}倍` : `。季節外れで出荷 ${OFF_FACTOR}倍`}）` : "（季節による増減なし）"}</div>`;
   if (sv) { const sg = G.stageOf(c), need = sg === 1 ? GROW_WEEKS[0] : sg === 2 ? GROW_WEEKS[1] : 0, st0 = stat[c.i] || G.cityStatus(c);
     h += `<p style="font-size:12px;margin:4px 0"><b>${STAGE[sg]}</b> ${stars(sg)}　${need ? `安定した週 ${c.goodWeeks}/${need}（遵守率90%以上の週を数えます）` : "この県の産業は発展しました"}<span class="voice">${voice(c, st0.level === 2 ? "late" : st0.level === 1 ? "jam" : sg === 3 ? "s3" : sg === 2 ? "s2" : "ok")}</span></p>`; }
   if (!selFound) h += `<p style="font-size:12px">地図でこの都市を探して押してみてください。 <button type="button" data-a="reveal">場所を見る</button></p>`;
@@ -519,6 +549,9 @@ function renderWeekly(){ const R = G.reports, a = R[R.length - 1], b = R[R.lengt
     <tr><td><b>利益（祝い金を除く）</b></td><td><b>${fmtG(pf(a))}</b></td><td>${d(pf(a), b && pf(b), fmtG)}</td></tr></table>`; }
 function consumeFx(now){ const grows = []; for (const e of G.fx) {
     if (e.type === "deliver") { const a = agg[e.c] = agg[e.c] || { fee: 0, late: 0 }; a.fee += e.fee; if (!e.ok) a.late++; }
+    else if (e.type === "season" || e.type === "seasonSoon") { const sv = G.served(), up = G.cities.filter(c => sv.has(c.i) && c.peak.includes(e.s)).sort((a, b) => b.mass - a.mass);
+      const list = up.length ? "出荷が増える県：" + up.slice(0, 5).map(c => `${c.pref}（${c.prod}）`).join("・") + (up.length > 5 ? ` ほか${up.length - 5}県` : "") : "接続中の県に、旬を迎える特産品はありません";
+      banner(e.type === "season" ? `${SEASONS[e.s]}になりました` : `もうすぐ${SEASONS[e.s]}（約3日後）`, list, e.type === "season" && up.length ? `${up[0].pref}の声：「${up[0].prod}の出荷が忙しくなる季節です。」` : ""); }
     else if (e.type === "complete") banner("全国物流網が完成！", `47都道府県で納期遵守率${GOAL * 100}%以上を${GOAL_WEEKS}週達成　／　車両 <span class="big">${G.completed.trucks}台</span>`);
     else if (e.type === "first") { const o = G.cities[e.o], d = G.cities[e.d]; banner(`${kenOf(o)}の${o.prod}が初出荷！ 祝い金 +${FIRST_BONUS.toLocaleString()}G`, `${o.name} → ${d.name}　／　特産品の初出荷 <span class="big">${G.firsts.size}</span>/47`, `${o.pref}の声：${voice(o, "first", d)}`); }
     else if (e.type === "grow") { grows.push(e); pops.push({ c: e.c, text: "★".repeat(e.stage - 1), color: "warn", born: now, dur: 3000, big: true }); } }
@@ -558,12 +591,13 @@ function renderHint(){ const h = $("hint");
   else h.innerHTML = `<b>全国物流網が完成しました（第${G.completed.week}週）。</b><br>ここからは記録に挑戦できます。遵守率${GOAL * 100}%以上の週の記録：最高利益 ${G.records.profit === null ? "—" : fmtG(G.records.profit)} ／ 最少車両 ${G.records.trucks === null ? "—" : G.records.trucks + "台"}`; }
 let msgT = 0; function say(m){ if (!m) return; $("msg").textContent = m; clearTimeout(msgT); msgT = setTimeout(() => $("msg").textContent = "", 5000); }
 function hud(){ const d = Math.floor(G.t / 24) + 1, hh = Math.floor(G.t % 24), mm = Math.floor(G.t % 1 * 60 / 10) * 10, ot = G.onTime();
-  refreshStatus(); checkChanges(); if (!building) renderHint(); if (!hold) { renderHealth(); renderRouteList(); renderRegions(); if (sel >= 0) renderCity(); if (changes.some(ch => !ch.after)) renderResults(); } $("s-first").textContent = G.firsts.size + "/47"; $("s-dev").textContent = G.developed() + "/47";
+  refreshStatus(); checkChanges(); if (!building) renderHint(); if (!hold) { renderHealth(); renderRouteList(); renderRegions(); if (sel >= 0) renderCity(); if (changes.some(ch => !ch.after)) renderResults(); } $("s-first").textContent = G.firsts.size + "/47"; $("s-dev").textContent = G.developed() + "/47"; $("s-season").textContent = `${SEASONS[G.season()]}（あと${Math.max(1, Math.ceil(((G.seasonNo + 1) * SEASON_H - G.t) / 24))}日）`;
   $("s-time").textContent = `${d}日目 ${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`; $("s-money").style.color = G.money < 0 ? col.bad : "";
   $("s-ot").textContent = ot === null ? "—" : (ot * 100).toFixed(0) + "%"; $("s-ot").style.color = ot === null ? "" : ot >= 0.95 ? col.good : ot >= 0.85 ? col.warn : col.bad;
   $("s-lf").textContent = (G.lf * 100).toFixed(0) + "%"; $("s-cov").textContent = G.served().size + "/47";
   const out = []; for (let k = G.log.length - 1; k >= 0 && out.length < 9; k--) { const e = G.log[k];
     if (e.kind === "v") { const c = G.cities[e.c]; out.push(`<div><span class="pill ${e.tone === "late" ? "late" : e.tone === "jam" ? "warnc" : "ok"}">声</span><span>${c.pref}：${e.text}</span></div>`); }
+    else if (e.kind === "s") out.push(`<div><span class="pill wk">季節</span><span>${SEASONS[e.s]}になりました</span></div>`);
     else if (e.kind === "g") { const c = G.cities[e.c]; out.push(`<div><span class="pill wk">${e.stage === 3 ? "発展" : "定着"}</span><span>${kenOf(c)} ${"★".repeat(e.stage - 1)}</span></div>`); }
     else if (e.kind === "f") { const o = G.cities[e.o]; out.push(`<div><span class="pill wk">初出荷</span><span>${o.pref}の${o.prod}</span></div>`); }
     else if (e.kind === "w") out.push(`<div><span class="pill wk">第${e.rep.week}週</span><span>配達 ${e.rep.n}箱・遵守率 ${(e.rep.rate * 100).toFixed(0)}%・収支 ${fmtG(e.rep.rev - e.rep.upkeep)}</span></div>`);

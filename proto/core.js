@@ -2,13 +2,17 @@
 const CAP = 10, CAP_BIG = 20, TRUCK_PRICE_BIG = 9000, UPKEEP_BIG = 3500, STOP_H = 0.5, GRACE = 6, MAX_STOPS = 6;
 const TRUCK_PRICE = 4000, UPKEEP_WEEK = 2000, REGION_PRICE = 10000, START_MONEY = 20000, TRUCK_SELL = 2000, FIRST_BONUS = 1000, OPEN_BONUS = 1000, GATE = 0.9, GOAL = 0.95, GOAL_WEEKS = 4, GROW_RATE = 0.9, GROW_MIN = 5, GROW_WEEKS = [2, 6];   // 地域の発展: 安定した週が2週で定着、6週で発展
 const FEE_BASE = 10, FEE_PER_H = 4, DEMAND_K = 0.025;
+// 四季: 1季節=14日。旬の特産品は出荷が増え、季節外れは減る（旬の割り当ては仮置き）
+const SEASONS = ["春", "夏", "秋", "冬"], SEASON_DAYS = 14, SEASON_H = SEASON_DAYS * 24, PEAK_FACTOR = 1.6, OFF_FACTOR = 0.8, SOON_H = 72;
+const PEAKS = { 北海道: [2], 青森: [2], 岩手: [0], 秋田: [2], 山形: [1], 福島: [1], 栃木: [3, 0], 群馬: [2], 埼玉: [3], 千葉: [2], 新潟: [2], 富山: [0], 山梨: [2], 長野: [1], 静岡: [0],
+  兵庫: [3], 奈良: [2], 和歌山: [3], 鳥取: [2], 島根: [1], 広島: [3], 山口: [3], 徳島: [1], 高知: [0, 2], 佐賀: [3], 熊本: [3, 0], 大分: [2], 宮崎: [1], 鹿児島: [2], 沖縄: [1] };
 const REGIONS = ["北海道", "東北", "関東", "中部", "近畿", "中国", "四国", "九州・沖縄"];
 const ROUTE_COLORS = ["#d1495b", "#1f7a8c", "#e09f3e", "#5b5f97", "#3a7d44", "#b5179e", "#8d6e63", "#0077b6", "#bc6c25", "#6a4c93"];
 const EDGE_SRC = "北海道-青森:8:sea,青森-岩手,青森-秋田,岩手-秋田,岩手-宮城,秋田-山形,宮城-山形,宮城-福島,山形-福島,山形-新潟,福島-栃木,福島-新潟,福島-茨城,栃木-埼玉,栃木-茨城,栃木-群馬,茨城-千葉,茨城-東京,埼玉-東京,埼玉-群馬,東京-千葉,東京-神奈川,東京-山梨,神奈川-静岡,群馬-長野,群馬-新潟,新潟-長野,新潟-富山,長野-山梨,長野-富山,長野-愛知,山梨-静岡,静岡-愛知,富山-石川,石川-福井,富山-岐阜,岐阜-愛知,福井-滋賀,愛知-三重,岐阜-滋賀,三重-滋賀,三重-奈良,滋賀-京都,京都-大阪,京都-奈良,奈良-大阪,大阪-和歌山,大阪-兵庫,兵庫-岡山,兵庫-鳥取,岡山-鳥取,鳥取-島根,岡山-広島,島根-広島,広島-山口,島根-山口,岡山-香川,兵庫-徳島,徳島-香川,香川-愛媛,香川-高知,徳島-高知,愛媛-高知,広島-愛媛:2.75,山口-福岡,福岡-佐賀,佐賀-長崎,福岡-大分,福岡-熊本,大分-宮崎,熊本-鹿児島,熊本-宮崎,宮崎-鹿児島,熊本-大分,鹿児島-沖縄:24:sea";
 
 function createGame(CITY_DATA, rng, saved) {
   rng = rng || Math.random;
-  const cities = CITY_DATA.map((c, i) => ({ ...c, i, wait: [], cancels: [], goodWeeks: 0, wkN: 0, wkOk: 0 }));
+  const cities = CITY_DATA.map((c, i) => ({ ...c, i, wait: [], cancels: [], goodWeeks: 0, wkN: 0, wkOk: 0, peak: PEAKS[c.pref] || [] }));
   const byPref = {}; cities.forEach(c => byPref[c.pref] = c.i);
   const hav = (a, b) => { const R = 6371, r = Math.PI / 180, dl = (b.lat - a.lat) * r, dn = (b.lon - a.lon) * r;
     const h = Math.sin(dl / 2) ** 2 + Math.cos(a.lat * r) * Math.cos(b.lat * r) * Math.sin(dn / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(h)); };
@@ -16,7 +20,7 @@ function createGame(CITY_DATA, rng, saved) {
     // 道路時間(仮): 直線距離×1.3÷時速75km。海をまたぐ区間は個別指定
     return { a, b, h: h ? +h : Math.max(0.5, Math.round(hav(cities[a], cities[b]) * 1.3 / 75 * 4) / 4), sea: !!sea }; });
   const G = { t: 0, money: START_MONEY, cities, edges, routes: [], unlocked: new Set([2]), dist: [], nxt: [], table: {}, pairs: [], cum: [], rate: 0,
-    judged: [], lf: 0.5, week: { n: 0, ok: 0, rev: 0, upkeep: 0, bonus: 0 }, garage: 0, garageBig: 0, lastBonus: 0, streak: 0, completed: null, records: { profit: null, trucks: null }, weekNo: 1, reports: [], log: [], nextRouteId: 1, sweepAt: 0, fx: [], firsts: new Set(), totalDelivered: 0, onChange: null };
+    judged: [], lf: 0.5, week: { n: 0, ok: 0, rev: 0, upkeep: 0, bonus: 0 }, garage: 0, garageBig: 0, lastBonus: 0, seasonNo: 0, soonFor: -1, streak: 0, completed: null, records: { profit: null, trucks: null }, weekNo: 1, reports: [], log: [], nextRouteId: 1, sweepAt: 0, fx: [], firsts: new Set(), totalDelivered: 0, onChange: null };
   const N = cities.length;
 
   function rebuildRoads() {
@@ -49,12 +53,16 @@ function createGame(CITY_DATA, rng, saved) {
             acc += r.legs[Math.min(j, j - dir)].h + (Math.abs(j - i) > 1 ? STOP_H : 0); const v = r.stops[j];
             if (!best[v] || base + acc < best[v].c - 1e-9) best[v] = { c: base + acc, p: bp.concat([{ r: r.id, a: i, b: j }]) }; } } } }
       table[o] = {}; for (const d in best) if (d !== o) table[o][d] = best[d].p; }
-    G.table = table; G.pairs = []; G.cum = []; let s = 0;
-    for (const o in table) for (const d in table[o]) { s += cities[o].mass * cities[d].mass / (1 + G.dist[o][d]); G.pairs.push([+o, +d]); G.cum.push(s); }
-    G.rate = s * DEMAND_K;
+    G.table = table; buildPairs();
     for (const c of cities) for (const sh of c.wait) sh.path = planFrom(c.i, sh.d);
     if (G.onChange) G.onChange();
   }
+  // 季節による出荷量の倍率（出荷元の県の旬で決まる）
+  const season = () => G.seasonNo % 4;
+  const seasonFactor = (c, sn) => !c.peak.length ? 1 : c.peak.includes(sn === undefined ? season() : sn) ? PEAK_FACTOR : OFF_FACTOR;
+  function buildPairs() { G.pairs = []; G.cum = []; let s = 0; const table = G.table;
+    for (const o in table) { const f = seasonFactor(cities[o]); for (const d in table[o]) { s += cities[o].mass * cities[d].mass / (1 + G.dist[o][d]) * f; G.pairs.push([+o, +d]); G.cum.push(s); } }
+    G.rate = s * DEMAND_K; }
   const planFrom = (o, d) => { const p = G.table[o] && G.table[o][d]; return p ? p.slice() : null; };
 
   function addRoute(stops, free) {
@@ -125,6 +133,9 @@ function createGame(CITY_DATA, rng, saved) {
   function poisson(l) { const L = Math.exp(-l); let k = 0, p = 1; do { k++; p *= rng(); } while (p > L); return k - 1; }
   function step(dt) {
     G.t += dt;
+    { const sn = Math.floor(G.t / SEASON_H);
+      if (sn !== G.seasonNo) { G.seasonNo = sn; buildPairs(); G.fx.push({ type: "season", s: sn % 4 }); G.log.push({ t: G.t, kind: "s", s: sn % 4 }); }
+      else if (G.soonFor !== sn && G.t >= (sn + 1) * SEASON_H - SOON_H) { G.soonFor = sn; G.fx.push({ type: "seasonSoon", s: (sn + 1) % 4 }); } }
     if (G.rate > 0) { for (let n = poisson(G.rate * dt); n > 0; n--) { const x = rng() * G.cum[G.cum.length - 1]; let lo = 0, hi = G.cum.length - 1;
       while (lo < hi) { const m = (lo + hi) >> 1; if (G.cum[m] < x) lo = m + 1; else hi = m; } const [o, d] = G.pairs[lo];
       cities[o].wait.push({ o, d, born: G.t, due: G.t + 8 + 4 * G.dist[o][d], path: planFrom(o, d) }); } }
@@ -178,7 +189,7 @@ function createGame(CITY_DATA, rng, saved) {
   function restore(d) {
     if (!d || d.v !== SAVE_VERSION || !Array.isArray(d.routes) || d.cities.length !== N) throw new Error("保存データの形式が合いません");
     for (const k of ["t", "money", "judged", "lf", "week", "garage", "garageBig", "streak", "completed", "records", "weekNo", "reports", "log", "nextRouteId", "sweepAt", "totalDelivered"]) G[k] = d[k];
-    G.unlocked = new Set(d.unlocked); G.firsts = new Set(d.firsts); rebuildRoads();
+    G.unlocked = new Set(d.unlocked); G.firsts = new Set(d.firsts); G.seasonNo = Math.floor(G.t / SEASON_H); G.soonFor = G.t >= (G.seasonNo + 1) * SEASON_H - SOON_H ? G.seasonNo : -1; rebuildRoads();
     d.cities.forEach((c, i) => { cities[i].wait = c.w; cities[i].cancels = c.x; cities[i].goodWeeks = c.g || 0; cities[i].wkN = c.n || 0; cities[i].wkOk = c.k || 0; });
     G.routes = d.routes.map(x => { const r = { id: x.id, stops: x.stops, color: x.color, trucks: [], lf: x.lf, wkRev: x.wkRev, wkCost: x.wkCost, lastRev: x.lastRev, lastCost: x.lastCost }; routeGeom(r);
       r.trucks = x.trucks.map(q => ({ route: r, idx: q.idx, to: q.to, dir: q.dir, state: q.state, start: q.start, until: q.until, big: !!q.big, cap: q.big ? CAP_BIG : CAP, load: q.load, leg: q.state === "move" ? r.legs[Math.min(q.idx, q.to)] : undefined })); return r; });
@@ -191,6 +202,6 @@ function createGame(CITY_DATA, rng, saved) {
     addRoute(["神奈川", "東京", "埼玉", "群馬"].map(p => byPref[p]), true); addTruck(G.routes[0], true, G.routes[0].cycle / 2);
     addRoute(["千葉", "東京"].map(p => byPref[p]), true);
   }
-  return Object.assign(G, { step, addRoute, addTruck, removeTruck, removeRoute, unlockRegion, regionAdjacent, roadPath, headway, onTime, served, truckCount, byPref, cityStatus, forecast, sellTruck, editRoute, upkeepOf, serialize, stageOf, developed });
+  return Object.assign(G, { step, addRoute, addTruck, removeTruck, removeRoute, unlockRegion, regionAdjacent, roadPath, headway, onTime, served, truckCount, byPref, cityStatus, forecast, sellTruck, editRoute, upkeepOf, serialize, stageOf, developed, season, seasonFactor });
 }
-if (typeof module !== "undefined") module.exports = { createGame, REGIONS, GROW_WEEKS, CAP_BIG, TRUCK_PRICE_BIG, UPKEEP_BIG, GATE, GOAL, GOAL_WEEKS, TRUCK_SELL, FIRST_BONUS, OPEN_BONUS, TRUCK_PRICE, REGION_PRICE, CAP, UPKEEP_WEEK, MAX_STOPS };
+if (typeof module !== "undefined") module.exports = { createGame, REGIONS, SEASONS, SEASON_H, PEAK_FACTOR, OFF_FACTOR, GROW_WEEKS, CAP_BIG, TRUCK_PRICE_BIG, UPKEEP_BIG, GATE, GOAL, GOAL_WEEKS, TRUCK_SELL, FIRST_BONUS, OPEN_BONUS, TRUCK_PRICE, REGION_PRICE, CAP, UPKEEP_WEEK, MAX_STOPS };
